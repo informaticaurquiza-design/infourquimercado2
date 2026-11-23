@@ -1,0 +1,569 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Catalog product item with real-time stock inventory and sales counter.",
+      "type": "object",
+      "properties": {
+        "sku": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 32,
+          "pattern": "^[A-Z0-9\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "category": {
+          "type": "string",
+          "enum": ["tecnologia", "hogar", "indumentaria", "relojeria", "deportes", "gourmet"]
+        },
+        "categoryLabel": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 48
+        },
+        "description": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 800
+        },
+        "price": {
+          "type": "number"
+        },
+        "compareAtPrice": {
+          "type": "number"
+        },
+        "stock": {
+          "type": "integer"
+        },
+        "minStockThreshold": {
+          "type": "integer"
+        },
+        "soldCount": {
+          "type": "integer"
+        },
+        "imageUrl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160000
+        },
+        "images": {
+          "type": "array",
+          "description": "Up to 4 product gallery image URLs or compressed cropped image data URLs."
+        },
+        "specs": {
+          "type": "array"
+        },
+        "featured": {
+          "type": "boolean"
+        },
+        "freeShipping": {
+          "type": "boolean"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "sellerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "sellerName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "sellerBankAlias": {
+          "type": "string",
+          "maxLength": 60,
+          "description": "Optional seller bank alias displayed to buyers at transfer checkout."
+        },
+        "sellerBankCbuCvu": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Optional seller CBU or CVU displayed to buyers at transfer checkout."
+        },
+        "sellerBankAccountHolder": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Optional seller bank account holder name displayed to buyers at transfer checkout."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "sku",
+        "name",
+        "category",
+        "categoryLabel",
+        "description",
+        "price",
+        "stock",
+        "minStockThreshold",
+        "soldCount",
+        "imageUrl",
+        "specs",
+        "featured",
+        "active",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer purchase order with payment gateway receipt and real-time shipment tracking.",
+      "type": "object",
+      "properties": {
+        "orderNumber": {
+          "type": "string",
+          "maxLength": 24,
+          "pattern": "^ALB-[0-9]{4}-[0-9]{4}$"
+        },
+        "trackingCode": {
+          "type": "string",
+          "maxLength": 24,
+          "pattern": "^TRK-[A-Z0-9]{8}$"
+        },
+        "userId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "customerName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "customerEmail": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "shippingPhone": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 32
+        },
+        "shippingAddress": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 200
+        },
+        "shippingCity": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "shippingPostalCode": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 20
+        },
+        "shippingNotes": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "items": {
+          "type": "array"
+        },
+        "subtotal": {
+          "type": "number"
+        },
+        "discount": {
+          "type": "number"
+        },
+        "shippingCost": {
+          "type": "number"
+        },
+        "total": {
+          "type": "number"
+        },
+        "paymentMethod": {
+          "type": "string",
+          "enum": ["card", "wallet", "transfer", "cash"]
+        },
+        "paymentBrand": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "paymentLast4": {
+          "type": "string",
+          "maxLength": 4
+        },
+        "installments": {
+          "type": "integer"
+        },
+        "transactionId": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "paymentStatus": {
+          "type": "string",
+          "enum": ["approved", "pending_transfer", "pending_cash", "refunded"]
+        },
+        "paymentReceipt": {
+          "type": "object",
+          "description": "Uploaded bank transfer receipt image and extracted payment metadata."
+        },
+        "shipmentStatus": {
+          "type": "string",
+          "enum": ["confirmed", "preparing", "in_transit", "out_for_delivery", "delivered", "cancelled"]
+        },
+        "carrier": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "estimatedDelivery": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "currentLocation": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "trackingEvents": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "orderNumber",
+        "trackingCode",
+        "userId",
+        "customerName",
+        "customerEmail",
+        "shippingPhone",
+        "shippingAddress",
+        "shippingCity",
+        "shippingPostalCode",
+        "shippingNotes",
+        "items",
+        "subtotal",
+        "discount",
+        "shippingCost",
+        "total",
+        "paymentMethod",
+        "paymentBrand",
+        "paymentLast4",
+        "installments",
+        "transactionId",
+        "paymentStatus",
+        "shipmentStatus",
+        "carrier",
+        "estimatedDelivery",
+        "currentLocation",
+        "trackingEvents",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Real-time customer push notification for order receipts, shipment updates, and store broadcasts.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "message": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 320
+        },
+        "type": {
+          "type": "string",
+          "enum": ["order", "shipment", "promo", "inventory"]
+        },
+        "orderId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "read": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "userId",
+        "title",
+        "message",
+        "type",
+        "orderId",
+        "read",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private authenticated user profile with saved shipping details and push preferences.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "businessName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "defaultAddress": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "defaultCity": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "defaultPostalCode": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "bankCbuCvu": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Optional buyer CBU or CVU for refunds or transfer identification."
+        },
+        "bankAlias": {
+          "type": "string",
+          "maxLength": 60,
+          "description": "Optional buyer bank alias."
+        },
+        "bankAccountHolder": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Optional buyer bank account holder or account name."
+        },
+        "joinedAt": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Account registration timestamp used to compute the 30-day free seller trial."
+        },
+        "subscriptionStatus": {
+          "type": "string",
+          "enum": ["trial", "active", "inactive"]
+        },
+        "subscriptionPaidUntil": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "lastActivatedAt": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "pushEnabled": {
+          "type": "boolean"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["customer", "admin"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "email",
+        "photoURL",
+        "phone",
+        "defaultAddress",
+        "defaultCity",
+        "defaultPostalCode",
+        "pushEnabled",
+        "role",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Authorized administrator registry record.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "grantedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["email", "grantedAt"]
+    },
+    "StoreSettings": {
+      "title": "StoreSettings",
+      "description": "Global storefront shipping policy parameters including free shipping threshold and standard shipping fee.",
+      "type": "object",
+      "properties": {
+        "freeShippingThreshold": {
+          "type": "number"
+        },
+        "standardShippingCost": {
+          "type": "number"
+        },
+        "updatedBy": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["freeShippingThreshold", "standardShippingCost", "updatedBy", "updatedAt"]
+    },
+    "SubscriptionPayment": {
+      "title": "SubscriptionPayment",
+      "description": "Monthly $5000 seller account subscription payment record with cash or transfer receipt.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userName": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "businessName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "userEmail": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "amount": {
+          "type": "number"
+        },
+        "paymentMethod": {
+          "type": "string",
+          "enum": ["cash", "transfer"]
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "paymentReceipt": {
+          "type": "object"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rejected"]
+        },
+        "reviewedBy": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "reviewedAt": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "userId",
+        "userName",
+        "userEmail",
+        "amount",
+        "paymentMethod",
+        "note",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Storefront product catalog and real-time inventory records."
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Customer orders containing payment gateway receipts and shipment tracking timelines."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/Notification" },
+      "description": "Real-time customer push notifications and store announcements."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private customer profiles, seller subscription status, and saved shipping preferences isolated by UID."
+    },
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Trusted admin role registry managed exclusively by the bootstrapped admin."
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/StoreSettings" },
+      "description": "Storefront configuration such as shipping fee and free shipping threshold."
+    },
+    "/subscriptionPayments/{paymentId}": {
+      "schema": { "$ref": "#/entities/SubscriptionPayment" },
+      "description": "Monthly seller subscription payments ($5000) with cash reference or transfer receipt."
+    }
+  }
+}

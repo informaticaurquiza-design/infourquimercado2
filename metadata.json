@@ -1,0 +1,6 @@
+{
+  "name": "Alba Mercado",
+  "description": "Plataforma e-commerce con catálogo por rubros, pasarela de pagos integrada, inventario en tiempo real, panel de analíticas, seguimiento de envíos y notificaciones push.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
