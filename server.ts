@@ -2623,7 +2623,7 @@ async function startServer() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        allowedHosts: ['.trycloudflare.com', '.local'],
+        allowedHosts: ['.trycloudflare.com', '.local', '.app.github.dev', '.githubpreview.dev'],
       },
       appType: 'spa',
     });
@@ -2650,6 +2650,10 @@ async function startServer() {
     console.log(`  Modo de red : ${NETWORK_MODE === 'local' ? 'Solo esta PC (127.0.0.1)' : 'Red Local LAN (0.0.0.0)'}`);
     console.log(`  Base local  : ${getDbRelativeDisplay()}`);
     console.log(`  URL Local   : http://localhost:${PORT}`);
+    if (process.env.CODESPACES === 'true' && process.env.CODESPACE_NAME) {
+      const domain = process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN || 'app.github.dev';
+      console.log(`  Codespaces  : https://${process.env.CODESPACE_NAME}-${PORT}.${domain}`);
+    }
     if (lanUrls.length > 0) {
       for (const url of lanUrls) {
         console.log(`  URL en Red  : ${url}`);

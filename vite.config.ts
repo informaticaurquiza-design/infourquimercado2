@@ -34,8 +34,8 @@ export default defineConfig(() => {
       },
     },
     server: {
-      // Allow Cloudflare Tunnel (*.trycloudflare.com) and local LAN hostnames
-      allowedHosts: ['.trycloudflare.com', '.local'],
+      // Allow Cloudflare Tunnel, GitHub Codespaces, and local LAN hostnames
+      allowedHosts: ['.trycloudflare.com', '.local', '.app.github.dev', '.githubpreview.dev'],
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',

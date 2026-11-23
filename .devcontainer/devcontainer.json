@@ -1,0 +1,31 @@
+{
+  "name": "Infourqui Mercado",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-22-bookworm",
+  "containerEnv": {
+    "PORT": "3000",
+    "NETWORK_MODE": "lan",
+    "DISABLE_HMR": "false"
+  },
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": {
+      "label": "Infourqui Mercado",
+      "onAutoForward": "openBrowser",
+      "protocol": "http"
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "bradlc.vscode-tailwindcss",
+        "esbenp.prettier-vscode"
+      ],
+      "settings": {
+        "task.allowAutomaticTasks": "on",
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  }
+}

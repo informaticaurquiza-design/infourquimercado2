@@ -74,7 +74,9 @@ function isLocalOrLanHostname(hostname: string): boolean {
     host === '127.0.0.1' ||
     host === '::1' ||
     host.endsWith('.local') ||
-    host.endsWith('.trycloudflare.com')
+    host.endsWith('.trycloudflare.com') ||
+    host.endsWith('.app.github.dev') ||
+    host.endsWith('.githubpreview.dev')
   ) {
     return true;
   }
