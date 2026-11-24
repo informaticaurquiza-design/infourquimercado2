@@ -57,8 +57,8 @@ interface StorefrontViewProps {
 
 type SortOption = 'featured' | 'price_asc' | 'price_desc' | 'bestselling';
 
-function shuffleBannerSlides(slides: HeroBannerSlide[]): HeroBannerSlide[] {
-  const copy = [...slides];
+function shuffleItems<T>(items: T[]): T[] {
+  const copy = [...items];
   for (let i = copy.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
     [copy[i], copy[j]] = [copy[j], copy[i]];
@@ -93,10 +93,93 @@ export function StorefrontView({
       }),
     [benefits, user?.uid],
   );
-  const featuredPromoBenefit = storefrontBenefits.promoBenefits[0] ?? null;
-  const featuredThresholdBenefit =
-    storefrontBenefits.applicableBenefits.find((b) => b.type === 'min_amount_discount') ?? null;
   const heroInstallments = storefrontBenefits.catalogMaxInstallments;
+
+  const discountBannerSlides = useMemo(() => {
+    const slides = storefrontBenefits.applicableBenefits.map((benefit) => {
+      const expiryLabel = benefit.expiresAt
+        ? ` · Vence ${formatExpirationDate(benefit.expiresAt)}`
+        : '';
+      const personalLabel = benefit.targetUserId !== 'all' ? ' · Exclusivo para vos' : '';
+
+      if (benefit.type === 'promo_code') {
+        const minLabel =
+          benefit.minOrderAmount > 0
+            ? ` en compras desde ${formatCurrency(benefit.minOrderAmount)}`
+            : '';
+        return {
+          id: benefit.id,
+          headline: `${benefit.discountPercent}% OFF · Código ${benefit.promoCode}`,
+          detail: `${benefit.title}${minLabel}${personalLabel}${expiryLabel}`,
+          promoCode: benefit.promoCode,
+          kind: 'promo_code' as const,
+        };
+      }
+
+      if (benefit.type === 'min_amount_discount') {
+        return {
+          id: benefit.id,
+          headline: `${benefit.discountPercent}% OFF automático`,
+          detail: `En compras desde ${formatCurrency(benefit.minOrderAmount)} · ${benefit.title}${personalLabel}${expiryLabel}`,
+          promoCode: '',
+          kind: 'min_amount_discount' as const,
+        };
+      }
+
+      return {
+        id: benefit.id,
+        headline: `Hasta ${benefit.maxInstallments} cuotas sin interés`,
+        detail: `${benefit.title}${personalLabel}${expiryLabel}`,
+        promoCode: '',
+        kind: 'installments' as const,
+      };
+    });
+
+    const hasExplicitDiscount = storefrontBenefits.applicableBenefits.some(
+      (b) => b.type === 'promo_code' || b.type === 'min_amount_discount',
+    );
+    if (!hasExplicitDiscount) {
+      slides.push(
+        {
+          id: 'default-alba10',
+          headline: '10% OFF · Código ALBA10',
+          detail: 'Aplicá el cupón en tu carrito al finalizar la compra',
+          promoCode: 'ALBA10',
+          kind: 'promo_code' as const,
+        },
+        {
+          id: 'default-transfer',
+          headline: '5% OFF adicional por transferencia',
+          detail: 'Descuento automático pagando por transferencia bancaria',
+          promoCode: '',
+          kind: 'min_amount_discount' as const,
+        },
+      );
+    }
+
+    return shuffleItems(slides).slice(0, 10);
+  }, [storefrontBenefits.applicableBenefits]);
+
+  const [discountBannerIndex, setDiscountBannerIndex] = useState(0);
+  const [discountBannerPaused, setDiscountBannerPaused] = useState(false);
+
+  useEffect(() => {
+    setDiscountBannerIndex((prev) =>
+      discountBannerSlides.length > 0 ? prev % discountBannerSlides.length : 0,
+    );
+  }, [discountBannerSlides.length]);
+
+  useEffect(() => {
+    if (discountBannerSlides.length <= 1 || discountBannerPaused) return;
+    const timer = window.setInterval(() => {
+      setDiscountBannerIndex((prev) => (prev + 1) % discountBannerSlides.length);
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [discountBannerSlides.length, discountBannerPaused]);
+
+  const activeDiscountSlide =
+    discountBannerSlides[discountBannerIndex] ?? discountBannerSlides[0] ?? null;
+
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('featured');
   const [onlyFreeShipping, setOnlyFreeShipping] = useState(false);
@@ -116,7 +199,7 @@ export function StorefrontView({
   const [cardQuantities, setCardQuantities] = useState<Record<string, string>>({});
   const [recentlyAdded, setRecentlyAdded] = useState<{ id: string; qty: number } | null>(null);
   const [heroBannerSlides] = useState<HeroBannerSlide[]>(() =>
-    shuffleBannerSlides(HERO_BANNER_SLIDES),
+    shuffleItems(HERO_BANNER_SLIDES),
   );
   const [heroSlideIndex, setHeroSlideIndex] = useState(0);
   const handledSharedProductRef = useRef<string | null>(null);
@@ -324,47 +407,122 @@ export function StorefrontView({
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-4 pt-8 mt-8 border-t border-zinc-200">
-              <div>
-                <p className="font-mono text-sm font-semibold text-zinc-950 tabular-nums">
-                  {heroInstallments} cuotas
-                </p>
-                <p className="text-xs text-zinc-500 mt-0.5">Sin interés vigentes</p>
-              </div>
-              <div>
-                <p className="font-mono text-sm font-semibold text-zinc-950 tabular-nums">
-                  {shippingSettings.freeShippingThreshold === 0
-                    ? 'Gratis'
-                    : `${formatCurrency(shippingSettings.freeShippingThreshold)}+`}
-                </p>
-                <p className="text-xs text-zinc-500 mt-0.5">Envío bonificado</p>
-              </div>
-              <div>
-                {featuredPromoBenefit ? (
-                  <>
-                    <p className="font-mono text-sm font-semibold text-zinc-950 tabular-nums">
-                      {featuredPromoBenefit.discountPercent}% OFF
-                    </p>
-                    <p className="text-xs text-zinc-500 mt-0.5">
-                      Código {featuredPromoBenefit.promoCode}
-                    </p>
-                  </>
-                ) : featuredThresholdBenefit ? (
-                  <>
-                    <p className="font-mono text-sm font-semibold text-zinc-950 tabular-nums">
-                      {featuredThresholdBenefit.discountPercent}% OFF
-                    </p>
-                    <p className="text-xs text-zinc-500 mt-0.5">
-                      Compras {formatCurrency(featuredThresholdBenefit.minOrderAmount)}+
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <p className="font-mono text-sm font-semibold text-zinc-950 tabular-nums">
-                      10% OFF
-                    </p>
-                    <p className="text-xs text-zinc-500 mt-0.5">Código ALBA10</p>
-                  </>
+            <div className="pt-6 mt-6 border-t border-zinc-200">
+              <div
+                className="rounded-xl bg-zinc-950 text-white border border-zinc-800 px-4 py-3 transition-colors"
+                onMouseEnter={() => setDiscountBannerPaused(true)}
+                onMouseLeave={() => setDiscountBannerPaused(false)}
+                onFocus={() => setDiscountBannerPaused(true)}
+                onBlur={() => setDiscountBannerPaused(false)}
+              >
+                {activeDiscountSlide && (
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="w-8 h-8 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-400 inline-flex items-center justify-center shrink-0">
+                        {activeDiscountSlide.kind === 'promo_code' ? (
+                          <Tag className="w-4 h-4" />
+                        ) : activeDiscountSlide.kind === 'installments' ? (
+                          <CreditCard className="w-4 h-4" />
+                        ) : (
+                          <Percent className="w-4 h-4" />
+                        )}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="font-mono text-sm font-bold text-white tabular-nums truncate">
+                          {activeDiscountSlide.headline}
+                        </p>
+                        <p className="text-xs text-zinc-300 mt-0.5 truncate">
+                          {activeDiscountSlide.detail}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {activeDiscountSlide.promoCode && onApplyPromoCode && (
+                        <button
+                          type="button"
+                          onClick={() => onApplyPromoCode(activeDiscountSlide.promoCode)}
+                          className={`inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+                            activePromoCode.trim().toUpperCase() ===
+                            activeDiscountSlide.promoCode.trim().toUpperCase()
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-white text-zinc-950 hover:bg-blue-600 hover:text-white'
+                          }`}
+                        >
+                          {activePromoCode.trim().toUpperCase() ===
+                          activeDiscountSlide.promoCode.trim().toUpperCase() ? (
+                            <>
+                              <Check className="w-3 h-3" />
+                              <span>Aplicado</span>
+                            </>
+                          ) : (
+                            <span>Aplicar</span>
+                          )}
+                        </button>
+                      )}
+
+                      {discountBannerSlides.length > 1 && (
+                        <div className="inline-flex items-center gap-0.5 pl-1 border-l border-zinc-800">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDiscountBannerIndex(
+                                (prev) =>
+                                  (prev - 1 + discountBannerSlides.length) %
+                                  discountBannerSlides.length,
+                              )
+                            }
+                            aria-label="Descuento anterior"
+                            className="w-6 h-6 inline-flex items-center justify-center rounded text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+                          >
+                            <ChevronLeft className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDiscountBannerIndex(
+                                (prev) => (prev + 1) % discountBannerSlides.length,
+                              )
+                            }
+                            aria-label="Siguiente descuento"
+                            className="w-6 h-6 inline-flex items-center justify-center rounded text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+                          >
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {discountBannerSlides.length > 1 && (
+                  <div className="flex items-center justify-between gap-2 mt-2.5 pt-2 border-t border-zinc-800/80">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">
+                      Descuentos vigentes ({discountBannerIndex + 1}/{discountBannerSlides.length})
+                    </span>
+                    <div
+                      className="flex items-center gap-1"
+                      role="tablist"
+                      aria-label="Banner de descuentos vigentes"
+                    >
+                      {discountBannerSlides.map((slide, idx) => {
+                        const isActive = idx === discountBannerIndex;
+                        return (
+                          <button
+                            key={slide.id}
+                            type="button"
+                            role="tab"
+                            aria-selected={isActive}
+                            aria-label={`Ver descuento ${idx + 1}: ${slide.headline}`}
+                            onClick={() => setDiscountBannerIndex(idx)}
+                            className={`h-1 rounded-full transition-all cursor-pointer ${
+                              isActive ? 'w-4 bg-blue-400' : 'w-1.5 bg-zinc-600 hover:bg-zinc-400'
+                            }`}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
