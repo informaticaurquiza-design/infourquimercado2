@@ -432,6 +432,8 @@ export function ShipmentTrackingView({
               {orders.map((order) => {
                 const isSelected = activeOrder?.id === order.id;
                 const statusMeta = getShipmentStatusMeta(order.shipmentStatus);
+                const firstItem = order.items[0];
+                const extraItemsCount = Math.max(0, order.items.length - 1);
                 return (
                   <button
                     key={order.id}
@@ -440,31 +442,71 @@ export function ShipmentTrackingView({
                       setSelectedOrderId(order.id);
                       setLookupResult(null);
                     }}
-                    className={`w-full text-left p-4 rounded-xl border transition-colors cursor-pointer ${
+                    className={`w-full text-left p-3.5 rounded-xl border transition-colors cursor-pointer ${
                       isSelected
                         ? 'bg-zinc-950 text-white border-zinc-950'
                         : 'bg-white text-zinc-950 border-zinc-200 hover:border-zinc-400'
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-2 mb-1">
-                      <span className="font-mono text-sm font-semibold">{order.orderNumber}</span>
-                      <span
-                        className={`text-xs font-medium ${
-                          isSelected ? 'text-blue-300' : statusMeta.colorClass
-                        }`}
-                      >
-                        {statusMeta.label}
-                      </span>
+                    <div className="flex items-start gap-3">
+                      {firstItem && (
+                        <div
+                          className={`relative w-14 h-14 rounded-lg overflow-hidden shrink-0 border ${
+                            isSelected
+                              ? 'border-zinc-800 bg-zinc-900'
+                              : 'border-zinc-200 bg-zinc-100'
+                          }`}
+                        >
+                          <ProductImage
+                            src={firstItem.imageUrl}
+                            alt={firstItem.name}
+                            className="w-full h-full object-cover"
+                          />
+                          {extraItemsCount > 0 && (
+                            <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-zinc-950/85 text-white leading-none">
+                              +{extraItemsCount}
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2 mb-0.5">
+                          <span className="font-mono text-xs font-semibold truncate">
+                            {order.orderNumber}
+                          </span>
+                          <span
+                            className={`text-[11px] font-medium shrink-0 ${
+                              isSelected ? 'text-blue-300' : statusMeta.colorClass
+                            }`}
+                          >
+                            {statusMeta.label}
+                          </span>
+                        </div>
+
+                        {firstItem && (
+                          <p
+                            className={`text-xs font-medium truncate ${
+                              isSelected ? 'text-white' : 'text-zinc-900'
+                            }`}
+                          >
+                            {firstItem.name}
+                            {extraItemsCount > 0 ? ` (+${extraItemsCount})` : ''}
+                          </p>
+                        )}
+
+                        <p
+                          className={`font-mono text-[11px] mt-0.5 ${
+                            isSelected ? 'text-zinc-400' : 'text-zinc-500'
+                          }`}
+                        >
+                          {order.trackingCode}
+                        </p>
+                      </div>
                     </div>
-                    <p
-                      className={`font-mono text-xs mb-2 ${
-                        isSelected ? 'text-zinc-300' : 'text-zinc-500'
-                      }`}
-                    >
-                      {order.trackingCode}
-                    </p>
+
                     <div
-                      className={`flex items-center justify-between text-xs pt-2 border-t ${
+                      className={`flex items-center justify-between text-xs pt-2 mt-2.5 border-t ${
                         isSelected
                           ? 'border-zinc-800 text-zinc-300'
                           : 'border-zinc-100 text-zinc-500'
