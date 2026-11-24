@@ -5,6 +5,7 @@ import path from 'node:path';
 import type {
   AppNotification,
   AppUser,
+  DeliveryAgent,
   LocalBackupSnapshotMeta,
   Order,
   Product,
@@ -24,6 +25,7 @@ export interface LocalDatabaseSchema {
   notifications: AppNotification[];
   users: StoredLocalUser[];
   subscriptionPayments: SubscriptionPayment[];
+  deliveryAgents: DeliveryAgent[];
   shippingSettings: StoreSettings;
 }
 
@@ -83,6 +85,7 @@ function createSeedDatabase(): LocalDatabaseSchema {
     notifications,
     users: [],
     subscriptionPayments: [],
+    deliveryAgents: [],
     shippingSettings: {
       freeShippingThreshold: 150000,
       standardShippingCost: 8500,
@@ -117,6 +120,9 @@ export function loadLocalDb(): LocalDatabaseSchema {
         users: Array.isArray(parsed.users) ? parsed.users : [],
         subscriptionPayments: Array.isArray(parsed.subscriptionPayments)
           ? parsed.subscriptionPayments
+          : [],
+        deliveryAgents: Array.isArray(parsed.deliveryAgents)
+          ? parsed.deliveryAgents
           : [],
         shippingSettings:
           parsed.shippingSettings &&

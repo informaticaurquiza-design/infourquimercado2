@@ -51,14 +51,19 @@ import {
   generateTrackingCode,
   generateTransactionId,
   getAccountSubscriptionInfo,
+  getPreviousShipmentStatus,
+  validateDeliveryAgentInput,
   validateProductInput,
 } from './src/lib/validation.ts';
 import {
   CATEGORY_MAP,
   SHIPMENT_PIPELINE,
   type AppNotification,
+  type AssignedCourier,
   type CategoryId,
+  type DeliveryAgent,
   type DeliveryMethod,
+  type DeliveryVehicleType,
   type NotificationType,
   type Order,
   type PaymentMethod,
@@ -196,7 +201,14 @@ app.use(express.json({ limit: '4mb' }));
 const sseClients = new Set<Response>();
 
 function broadcastDbChange(
-  topic: 'products' | 'orders' | 'notifications' | 'settings' | 'cloudflare' | 'all',
+  topic:
+    | 'products'
+    | 'orders'
+    | 'notifications'
+    | 'settings'
+    | 'deliveryAgents'
+    | 'cloudflare'
+    | 'all',
 ): void {
   const payload = `data: ${JSON.stringify({ type: topic, ts: Date.now() })}\n\n`;
   for (const res of sseClients) {
@@ -936,6 +948,7 @@ app.get('/api/local/bootstrap', (req, res) => {
       : db.subscriptionPayments.filter((sp) => sp.userId === session.uid);
 
   const accounts = isAdmin ? db.users.map(toPublicProfile) : [];
+  const deliveryAgents = isAdmin ? [...db.deliveryAgents] : [];
 
   const userRecord = session ? db.users.find((u) => u.uid === session.uid) : null;
   const profile = userRecord ? toPublicProfile(userRecord) : null;
@@ -946,6 +959,7 @@ app.get('/api/local/bootstrap', (req, res) => {
     notifications,
     subscriptionPayments,
     accounts,
+    deliveryAgents,
     shippingSettings: db.shippingSettings,
     profile,
     isAdmin,
@@ -1560,6 +1574,109 @@ app.get('/api/local/orders/lookup', (req, res) => {
   res.json({ order: found || null });
 });
 
+function sanitizeAssignedCourier(raw: unknown): AssignedCourier | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  const agentId = clampString(String(obj.agentId || ''), 128);
+  const fullName = clampString(String(obj.fullName || ''), 100);
+  const vehicleType = String(obj.vehicleType || '').toLowerCase() as DeliveryVehicleType;
+  const licensePlate = clampString(String(obj.licensePlate || '').toUpperCase(), 16);
+  if (!agentId || !/^[a-zA-Z0-9_-]+$/.test(agentId)) return undefined;
+  const err = validateDeliveryAgentInput({ vehicleType, licensePlate, fullName });
+  if (err) return undefined;
+  return { agentId, fullName, vehicleType, licensePlate };
+}
+
+// --- API: Delivery Agents (Medios de Envío) ABM (Admin Only) ---
+
+app.post('/api/local/delivery-agents', async (req, res) => {
+  const session = requireAdmin(req, res);
+  if (!session) return;
+
+  const body = req.body ?? {};
+  const vehicleType = String(body.vehicleType || '').toLowerCase() as DeliveryVehicleType;
+  const licensePlate = clampString(String(body.licensePlate || '').toUpperCase(), 16);
+  const fullName = clampString(String(body.fullName || ''), 100);
+  const active = body.active !== false;
+
+  const errMsg = validateDeliveryAgentInput({ vehicleType, licensePlate, fullName });
+  if (errMsg) {
+    res.status(400).json({ error: errMsg });
+    return;
+  }
+
+  const nowIso = new Date().toISOString();
+  const created: DeliveryAgent = {
+    id: safeId('drv'),
+    vehicleType,
+    licensePlate,
+    fullName,
+    active,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+
+  await withDbWriteLock((db) => {
+    db.deliveryAgents.unshift(created);
+  });
+
+  broadcastDbChange('deliveryAgents');
+  res.status(201).json(created);
+});
+
+app.put('/api/local/delivery-agents/:id', async (req, res) => {
+  const session = requireAdmin(req, res);
+  if (!session) return;
+
+  const agentId = String(req.params.id || '').trim();
+  const body = req.body ?? {};
+  const vehicleType = String(body.vehicleType || '').toLowerCase() as DeliveryVehicleType;
+  const licensePlate = clampString(String(body.licensePlate || '').toUpperCase(), 16);
+  const fullName = clampString(String(body.fullName || ''), 100);
+  const active = body.active !== false;
+
+  const errMsg = validateDeliveryAgentInput({ vehicleType, licensePlate, fullName });
+  if (errMsg) {
+    res.status(400).json({ error: errMsg });
+    return;
+  }
+
+  try {
+    const updated = await withDbWriteLock((db) => {
+      const idx = db.deliveryAgents.findIndex((a) => a.id === agentId);
+      if (idx === -1) throw new Error('NOT_FOUND');
+      const next: DeliveryAgent = {
+        ...db.deliveryAgents[idx],
+        vehicleType,
+        licensePlate,
+        fullName,
+        active,
+        updatedAt: new Date().toISOString(),
+      };
+      db.deliveryAgents[idx] = next;
+      return next;
+    });
+
+    broadcastDbChange('deliveryAgents');
+    res.json(updated);
+  } catch {
+    res.status(404).json({ error: 'Medio de envío no encontrado.' });
+  }
+});
+
+app.delete('/api/local/delivery-agents/:id', async (req, res) => {
+  const session = requireAdmin(req, res);
+  if (!session) return;
+
+  const agentId = String(req.params.id || '').trim();
+  await withDbWriteLock((db) => {
+    db.deliveryAgents = db.deliveryAgents.filter((a) => a.id !== agentId);
+  });
+
+  broadcastDbChange('deliveryAgents');
+  res.json({ ok: true });
+});
+
 app.patch('/api/local/orders/:id/advance', async (req, res) => {
   const session = requireAdmin(req, res);
   if (!session) return;
@@ -1574,6 +1691,8 @@ app.patch('/api/local/orders/:id/advance', async (req, res) => {
     res.status(400).json({ error: 'Estado logístico inválido.' });
     return;
   }
+
+  const assignedCourier = sanitizeAssignedCourier(req.body?.assignedCourier);
 
   try {
     await withDbWriteLock((db) => {
@@ -1592,6 +1711,9 @@ app.patch('/api/local/orders/:id/advance', async (req, res) => {
 
       order.shipmentStatus = nextStatus;
       order.currentLocation = location;
+      if (assignedCourier) {
+        order.assignedCourier = assignedCourier;
+      }
       order.estimatedDelivery =
         nextStatus === 'delivered'
           ? 'Entregado'
@@ -1623,6 +1745,67 @@ app.patch('/api/local/orders/:id/advance', async (req, res) => {
     broadcastDbChange('notifications');
     res.json({ ok: true });
   } catch {
+    res.status(404).json({ error: 'Pedido no encontrado.' });
+  }
+});
+
+app.patch('/api/local/orders/:id/revert', async (req, res) => {
+  const session = requireAdmin(req, res);
+  if (!session) return;
+
+  const orderId = String(req.params.id || '');
+  try {
+    await withDbWriteLock((db) => {
+      const order = db.orders.find((o) => o.id === orderId);
+      if (!order) throw new Error('NOT_FOUND');
+
+      const previousStatus = getPreviousShipmentStatus(order.shipmentStatus);
+      if (!previousStatus) throw new Error('CANNOT_REVERT');
+
+      const currentStatus = order.shipmentStatus;
+      const trimmedEvents = [...order.trackingEvents];
+      while (
+        trimmedEvents.length > 1 &&
+        trimmedEvents[trimmedEvents.length - 1]?.status === currentStatus
+      ) {
+        trimmedEvents.pop();
+      }
+      const lastEvent = trimmedEvents[trimmedEvents.length - 1];
+      const isPickup =
+        order.deliveryMethod === 'pickup' || order.carrier === 'Retiro en domicilio';
+
+      order.shipmentStatus = previousStatus;
+      order.trackingEvents = trimmedEvents;
+      order.currentLocation = clampString(
+        lastEvent?.location ||
+          (isPickup
+            ? 'Listo para coordinar retiro en domicilio'
+            : 'Depósito Central — Reserva confirmada'),
+        120,
+      );
+      order.estimatedDelivery =
+        previousStatus === 'out_for_delivery'
+          ? 'Hoy antes de las 20:00 hs'
+          : previousStatus === 'in_transit'
+            ? 'Mañana antes de las 18:00 hs'
+            : isPickup
+              ? 'A coordinar por contacto'
+              : '3 a 5 días hábiles';
+      if (previousStatus === 'confirmed') {
+        delete order.assignedCourier;
+      }
+      order.updatedAt = new Date().toISOString();
+    });
+
+    broadcastDbChange('orders');
+    res.json({ ok: true });
+  } catch (err) {
+    if (err instanceof Error && err.message === 'CANNOT_REVERT') {
+      res.status(400).json({
+        error: 'Este pedido ya se encuentra en su etapa inicial y no puede retroceder más.',
+      });
+      return;
+    }
     res.status(404).json({ error: 'Pedido no encontrado.' });
   }
 });

@@ -6,10 +6,13 @@ import {
 import { auth } from '../lib/firebase';
 import type {
   AppUser,
+  AssignedCourier,
   CartItem,
   CategoryId,
   DatabaseMode,
+  DeliveryAgent,
   DeliveryMethod,
+  DeliveryVehicleType,
   NotificationType,
   Order,
   PaymentMethod,
@@ -26,12 +29,15 @@ import {
   adminSetCloudAccountStatus,
   advanceOrderShipmentStatus as cloudAdvanceOrderShipmentStatus,
   cancelCustomerOrder as cloudCancelCustomerOrder,
+  createOrUpdateDeliveryAgent as cloudCreateOrUpdateDeliveryAgent,
   createOrUpdateProduct as cloudCreateOrUpdateProduct,
   createOrderWithInventoryUpdate as cloudCreateOrderWithInventoryUpdate,
+  deleteDeliveryAgentById as cloudDeleteDeliveryAgentById,
   deleteNotificationById as cloudDeleteNotificationById,
   deleteProductById as cloudDeleteProductById,
   lookupOrderByCode as cloudLookupOrderByCode,
   markNotificationRead as cloudMarkNotificationRead,
+  revertOrderShipmentStatus as cloudRevertOrderShipmentStatus,
   saveShippingSettings as cloudSaveShippingSettings,
   sendAdminPushNotification as cloudSendAdminPushNotification,
   submitCloudSubscriptionPayment,
@@ -44,12 +50,15 @@ import {
   localAdvanceOrderShipmentStatus,
   localCancelOrder,
   localChangePassword,
+  localCreateOrUpdateDeliveryAgent,
   localCreateOrUpdateProduct,
   localCreateOrder,
+  localDeleteDeliveryAgent,
   localDeleteNotification,
   localDeleteProduct,
   localLookupOrderByCode,
   localMarkNotificationRead,
+  localRevertOrderShipmentStatus,
   localSaveShippingSettings,
   localSendPushNotification,
   localSubmitSubscriptionPayment,
@@ -233,12 +242,48 @@ export async function advanceOrderShipmentStatus(
   nextStatus: ShipmentStatus,
   location: string,
   note: string,
+  assignedCourier?: AssignedCourier,
 ): Promise<void> {
   if (currentDbMode === 'local') {
-    await localAdvanceOrderShipmentStatus(order.id, nextStatus, location, note);
+    await localAdvanceOrderShipmentStatus(
+      order.id,
+      nextStatus,
+      location,
+      note,
+      assignedCourier,
+    );
     return;
   }
-  await cloudAdvanceOrderShipmentStatus(order, nextStatus, location, note);
+  await cloudAdvanceOrderShipmentStatus(order, nextStatus, location, note, assignedCourier);
+}
+
+export async function revertOrderShipmentStatus(order: Order): Promise<void> {
+  if (currentDbMode === 'local') {
+    await localRevertOrderShipmentStatus(order.id);
+    return;
+  }
+  await cloudRevertOrderShipmentStatus(order);
+}
+
+export async function createOrUpdateDeliveryAgent(input: {
+  id?: string;
+  vehicleType: DeliveryVehicleType;
+  licensePlate: string;
+  fullName: string;
+  active: boolean;
+}): Promise<DeliveryAgent> {
+  if (currentDbMode === 'local') {
+    return localCreateOrUpdateDeliveryAgent(input);
+  }
+  return cloudCreateOrUpdateDeliveryAgent(input);
+}
+
+export async function deleteDeliveryAgentById(agentId: string): Promise<void> {
+  if (currentDbMode === 'local') {
+    await localDeleteDeliveryAgent(agentId);
+    return;
+  }
+  await cloudDeleteDeliveryAgentById(agentId);
 }
 
 export async function cancelCustomerOrder(order: Order): Promise<void> {

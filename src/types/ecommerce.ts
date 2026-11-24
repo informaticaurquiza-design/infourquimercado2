@@ -108,6 +108,34 @@ export interface CartItem {
 }
 
 export type DeliveryMethod = 'delivery' | 'pickup';
+export type DeliveryVehicleType = 'moto' | 'auto' | 'utilitario';
+
+export const DELIVERY_VEHICLE_OPTIONS: {
+  value: DeliveryVehicleType;
+  label: string;
+}[] = [
+  { value: 'moto', label: 'Moto' },
+  { value: 'auto', label: 'Auto' },
+  { value: 'utilitario', label: 'Utilitario' },
+];
+
+export interface DeliveryAgent {
+  id: string;
+  vehicleType: DeliveryVehicleType;
+  licensePlate: string;
+  fullName: string;
+  active: boolean;
+  createdAt?: Timestamp | string;
+  updatedAt?: Timestamp | string;
+}
+
+export interface AssignedCourier {
+  agentId: string;
+  fullName: string;
+  vehicleType: DeliveryVehicleType;
+  licensePlate: string;
+}
+
 export type PaymentMethod = 'card' | 'wallet' | 'transfer' | 'cash';
 export type PaymentStatus = 'approved' | 'pending_transfer' | 'pending_cash' | 'refunded';
 export type ShipmentStatus =
@@ -175,6 +203,7 @@ export interface Order {
   paymentReceipt?: PaymentReceipt;
   shipmentStatus: ShipmentStatus;
   carrier: string;
+  assignedCourier?: AssignedCourier;
   estimatedDelivery: string;
   currentLocation: string;
   trackingEvents: TrackingEvent[];

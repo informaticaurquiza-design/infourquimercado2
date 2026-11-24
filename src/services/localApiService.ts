@@ -4,11 +4,14 @@ import { getDefaultCategoryImage } from '../lib/categoryAssets';
 import type {
   AppNotification,
   AppUser,
+  AssignedCourier,
   CartItem,
   CategoryId,
   CloudflareTunnelStatus,
   DatabaseMode,
+  DeliveryAgent,
   DeliveryMethod,
+  DeliveryVehicleType,
   LocalBackupSnapshotMeta,
   LocalServerInfo,
   NotificationType,
@@ -78,6 +81,7 @@ export interface LocalBootstrapPayload {
   notifications: AppNotification[];
   subscriptionPayments: SubscriptionPayment[];
   accounts: UserProfile[];
+  deliveryAgents?: DeliveryAgent[];
   shippingSettings: StoreSettings;
   profile: UserProfile | null;
   isAdmin: boolean;
@@ -302,10 +306,45 @@ export async function localAdvanceOrderShipmentStatus(
   nextStatus: ShipmentStatus,
   location: string,
   note: string,
+  assignedCourier?: AssignedCourier,
 ): Promise<void> {
   await apiRequest(`/api/local/orders/${encodeURIComponent(orderId)}/advance`, {
     method: 'PATCH',
-    body: JSON.stringify({ nextStatus, location, note }),
+    body: JSON.stringify({ nextStatus, location, note, assignedCourier }),
+  });
+}
+
+export async function localRevertOrderShipmentStatus(orderId: string): Promise<void> {
+  await apiRequest(`/api/local/orders/${encodeURIComponent(orderId)}/revert`, {
+    method: 'PATCH',
+  });
+}
+
+export async function localCreateOrUpdateDeliveryAgent(input: {
+  id?: string;
+  vehicleType: DeliveryVehicleType;
+  licensePlate: string;
+  fullName: string;
+  active: boolean;
+}): Promise<DeliveryAgent> {
+  if (input.id) {
+    return apiRequest<DeliveryAgent>(
+      `/api/local/delivery-agents/${encodeURIComponent(input.id)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      },
+    );
+  }
+  return apiRequest<DeliveryAgent>('/api/local/delivery-agents', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function localDeleteDeliveryAgent(agentId: string): Promise<void> {
+  await apiRequest(`/api/local/delivery-agents/${encodeURIComponent(agentId)}`, {
+    method: 'DELETE',
   });
 }
 

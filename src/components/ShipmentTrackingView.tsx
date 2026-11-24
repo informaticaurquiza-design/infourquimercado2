@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
 import {
+  ArrowLeft,
   ArrowRight,
   Check,
   Edit3,
   FileCheck2,
   MapPin,
   Package,
+  Plus,
   Search,
+  Settings2,
   Truck,
   X,
   XCircle,
@@ -15,19 +18,28 @@ import {
   formatCurrency,
   formatDateTime,
   getNextShipmentStatus,
+  getPreviousShipmentStatus,
   getShipmentStatusMeta,
+  getVehicleTypeLabel,
 } from '../lib/validation';
 import {
   advanceOrderShipmentStatus,
   cancelCustomerOrder,
   lookupOrderByCode,
+  revertOrderShipmentStatus,
 } from '../services/dataService';
 import {
   SHIPMENT_PIPELINE,
   type AppUser,
+  type AssignedCourier,
+  type DeliveryAgent,
   type Order,
   type ShipmentStatus,
 } from '../types/ecommerce';
+import {
+  DeliveryAgentsManagerModal,
+  VehicleTypeIcon,
+} from './DeliveryAgentsManagerModal';
 import { ProductImage } from './ProductImage';
 
 function getDefaultAdvanceDetails(
@@ -101,6 +113,7 @@ interface ShipmentTrackingViewProps {
   user: AppUser | null;
   isAdmin: boolean;
   orders: Order[];
+  deliveryAgents: DeliveryAgent[];
   initialSelectedOrderId: string | null;
   onRequireSignIn: () => void;
   onNotifyToast: (msg: string) => void;
@@ -110,6 +123,7 @@ export function ShipmentTrackingView({
   user,
   isAdmin,
   orders,
+  deliveryAgents,
   initialSelectedOrderId,
   onRequireSignIn,
   onNotifyToast,
@@ -121,7 +135,10 @@ export function ShipmentTrackingView({
   const [searching, setSearching] = useState(false);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [receiptLightboxOpen, setReceiptLightboxOpen] = useState(false);
+  const [agentsModalOpen, setAgentsModalOpen] = useState(false);
+  const [selectedAgentId, setSelectedAgentId] = useState('');
   const [advancing, setAdvancing] = useState(false);
+  const [reverting, setReverting] = useState(false);
   const [advanceError, setAdvanceError] = useState('');
   const [showCustomAdvance, setShowCustomAdvance] = useState(false);
   const [customLocation, setCustomLocation] = useState('');
@@ -145,10 +162,19 @@ export function ShipmentTrackingView({
   const nextStageMeta = nextShipmentStatus
     ? getShipmentStatusMeta(nextShipmentStatus)
     : null;
+  const previousShipmentStatus = activeOrder
+    ? getPreviousShipmentStatus(activeOrder.shipmentStatus)
+    : null;
+  const previousStageMeta = previousShipmentStatus
+    ? getShipmentStatusMeta(previousShipmentStatus)
+    : null;
+
+  const availableAgents = deliveryAgents.filter((a) => a.active);
 
   useEffect(() => {
     setAdvanceError('');
     setShowCustomAdvance(false);
+    setSelectedAgentId(activeOrder?.assignedCourier?.agentId || '');
     if (activeOrder && nextShipmentStatus) {
       const defaults = getDefaultAdvanceDetails(activeOrder, nextShipmentStatus);
       setCustomLocation(defaults.location);
@@ -157,7 +183,7 @@ export function ShipmentTrackingView({
       setCustomLocation('');
       setCustomNote('');
     }
-  }, [activeOrder?.id, activeOrder?.shipmentStatus, nextShipmentStatus]);
+  }, [activeOrder?.id, activeOrder?.shipmentStatus, activeOrder?.assignedCourier?.agentId, nextShipmentStatus]);
 
   async function handleCodeLookup(e: React.FormEvent) {
     e.preventDefault();
@@ -207,15 +233,43 @@ export function ShipmentTrackingView({
   }
 
   async function handleAdvanceNextStage() {
-    if (!activeOrder || !nextShipmentStatus || !isAdmin || advancing) return;
+    if (!activeOrder || !nextShipmentStatus || !isAdmin || advancing || reverting) return;
     setAdvanceError('');
     setAdvancing(true);
     try {
       const defaults = getDefaultAdvanceDetails(activeOrder, nextShipmentStatus);
-      const location = (showCustomAdvance ? customLocation.trim() : '') || defaults.location;
-      const note = (showCustomAdvance ? customNote.trim() : '') || defaults.note;
+      const chosenAgent =
+        nextShipmentStatus === 'preparing' && selectedAgentId
+          ? deliveryAgents.find((a) => a.id === selectedAgentId)
+          : undefined;
 
-      await advanceOrderShipmentStatus(activeOrder, nextShipmentStatus, location, note);
+      const assignedCourier: AssignedCourier | undefined = chosenAgent
+        ? {
+            agentId: chosenAgent.id,
+            fullName: chosenAgent.fullName,
+            vehicleType: chosenAgent.vehicleType,
+            licensePlate: chosenAgent.licensePlate,
+          }
+        : undefined;
+
+      const location = (showCustomAdvance ? customLocation.trim() : '') || defaults.location;
+      const courierNoteSuffix = assignedCourier
+        ? ` Repartidor asignado: ${assignedCourier.fullName} (${getVehicleTypeLabel(
+            assignedCourier.vehicleType,
+          )} · Patente ${assignedCourier.licensePlate}).`
+        : '';
+      const baseNote = (showCustomAdvance ? customNote.trim() : '') || defaults.note;
+      const note = `${baseNote}${
+        assignedCourier && !baseNote.includes(assignedCourier.licensePlate) ? courierNoteSuffix : ''
+      }`.slice(0, 200);
+
+      await advanceOrderShipmentStatus(
+        activeOrder,
+        nextShipmentStatus,
+        location,
+        note,
+        assignedCourier,
+      );
 
       if (lookupResult && user) {
         if (orders.some((o) => o.id === activeOrder.id)) {
@@ -229,7 +283,9 @@ export function ShipmentTrackingView({
       const stageMeta = getShipmentStatusMeta(nextShipmentStatus);
       setShowCustomAdvance(false);
       onNotifyToast(
-        `Seguimiento ${activeOrder.orderNumber} avanzado a "${stageMeta.label}".`,
+        assignedCourier
+          ? `Seguimiento ${activeOrder.orderNumber} avanzado a "${stageMeta.label}" — Envío asignado a ${assignedCourier.fullName}.`
+          : `Seguimiento ${activeOrder.orderNumber} avanzado a "${stageMeta.label}".`,
       );
     } catch (err) {
       const msg =
@@ -240,6 +296,39 @@ export function ShipmentTrackingView({
       onNotifyToast(msg);
     } finally {
       setAdvancing(false);
+    }
+  }
+
+  async function handleRevertPreviousStage() {
+    if (!activeOrder || !previousShipmentStatus || !isAdmin || advancing || reverting) return;
+    setAdvanceError('');
+    setReverting(true);
+    try {
+      await revertOrderShipmentStatus(activeOrder);
+
+      if (lookupResult && user) {
+        if (orders.some((o) => o.id === activeOrder.id)) {
+          setLookupResult(null);
+        } else {
+          const refreshed = await lookupOrderByCode(activeOrder.trackingCode, user.uid, isAdmin);
+          if (refreshed) setLookupResult(refreshed);
+        }
+      }
+
+      const prevMeta = getShipmentStatusMeta(previousShipmentStatus);
+      setShowCustomAdvance(false);
+      onNotifyToast(
+        `Seguimiento ${activeOrder.orderNumber} retrocedido a "${prevMeta.label}".`,
+      );
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'No pudimos retroceder el seguimiento en este momento.';
+      setAdvanceError(msg);
+      onNotifyToast(msg);
+    } finally {
+      setReverting(false);
     }
   }
 
@@ -261,25 +350,37 @@ export function ShipmentTrackingView({
           </p>
         </div>
 
-        <form onSubmit={handleCodeLookup} className="flex flex-col sm:flex-row gap-2.5 w-full lg:w-auto">
-          <div className="relative flex-1 sm:w-72">
-            <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              type="text"
-              value={searchCode}
-              onChange={(e) => setSearchCode(e.target.value)}
-              placeholder="Ej. TRK-84K9M2P1 o ALB-2026-8401"
-              className="w-full pl-9 pr-3 py-2.5 text-sm font-mono bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700 uppercase"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={searching}
-            className="px-5 py-2.5 text-sm font-medium text-white bg-zinc-950 hover:bg-blue-700 disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-          >
-            {searching ? 'Buscando...' : 'Rastrear envío'}
-          </button>
-        </form>
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 w-full lg:w-auto">
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setAgentsModalOpen(true)}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-zinc-900 bg-white hover:bg-zinc-50 border border-zinc-300 hover:border-zinc-950 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+            >
+              <Settings2 className="w-4 h-4 text-blue-700" />
+              <span>Medios de envío ({deliveryAgents.length})</span>
+            </button>
+          )}
+          <form onSubmit={handleCodeLookup} className="flex flex-col sm:flex-row gap-2.5 flex-1">
+            <div className="relative flex-1 sm:w-64">
+              <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={searchCode}
+                onChange={(e) => setSearchCode(e.target.value)}
+                placeholder="Ej. TRK-84K9M2P1 o ALB-2026-8401"
+                className="w-full pl-9 pr-3 py-2.5 text-sm font-mono bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700 uppercase"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={searching}
+              className="px-5 py-2.5 text-sm font-medium text-white bg-zinc-950 hover:bg-blue-700 disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+            >
+              {searching ? 'Buscando...' : 'Rastrear envío'}
+            </button>
+          </form>
+        </div>
       </div>
 
       {searchError && (
@@ -421,6 +522,36 @@ export function ShipmentTrackingView({
                 </div>
               </div>
 
+              {/* Assigned Delivery Agent Banner */}
+              {activeOrder.assignedCourier && (
+                <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="w-9 h-9 rounded-lg bg-blue-700 text-white inline-flex items-center justify-center shrink-0">
+                      <VehicleTypeIcon
+                        vehicleType={activeOrder.assignedCourier.vehicleType}
+                        className="w-4 h-4"
+                      />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-semibold text-blue-800 uppercase tracking-wide">
+                        Responsable del envío asignado
+                      </p>
+                      <p className="text-sm font-semibold text-zinc-950 truncate">
+                        {activeOrder.assignedCourier.fullName}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="px-2.5 py-1 rounded-md bg-white border border-blue-200 font-medium text-zinc-800">
+                      {getVehicleTypeLabel(activeOrder.assignedCourier.vehicleType)}
+                    </span>
+                    <span className="px-2.5 py-1 rounded-md bg-zinc-950 text-white font-mono font-semibold">
+                      {activeOrder.assignedCourier.licensePlate}
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {/* 5-Stage Visual Logistics Stepper */}
               {activeOrder.shipmentStatus === 'cancelled' ? (
                 <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-3 text-sm text-red-700">
@@ -474,39 +605,106 @@ export function ShipmentTrackingView({
                     <h3 className="text-sm font-semibold text-zinc-950">
                       Historial de movimientos
                     </h3>
-                    {isAdmin && nextStageMeta && (
+                    {isAdmin && (nextStageMeta || previousStageMeta) && (
                       <p className="text-xs text-zinc-500 mt-0.5">
-                        Siguiente etapa:{' '}
-                        <span className="font-medium text-zinc-800">{nextStageMeta.label}</span>
+                        {nextStageMeta ? (
+                          <>
+                            Siguiente etapa:{' '}
+                            <span className="font-medium text-zinc-800">{nextStageMeta.label}</span>
+                          </>
+                        ) : (
+                          'Envío en etapa final.'
+                        )}
                       </p>
                     )}
                   </div>
 
-                  {isAdmin && nextShipmentStatus && nextStageMeta && (
+                  {isAdmin && (previousShipmentStatus || nextShipmentStatus) && (
                     <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setShowCustomAdvance((v) => !v)}
-                        disabled={advancing}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-zinc-700 bg-zinc-100 hover:bg-zinc-200 disabled:opacity-50 rounded-lg transition-colors cursor-pointer"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                        {showCustomAdvance ? 'Ocultar detalle' : 'Editar detalle'}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={advancing}
-                        onClick={() => void handleAdvanceNextStage()}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-55 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
-                      >
-                        <span>
-                          {advancing ? 'Avanzando...' : 'Próximo seguimiento'}
-                        </span>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </button>
+                      {previousShipmentStatus && previousStageMeta && (
+                        <button
+                          type="button"
+                          disabled={advancing || reverting}
+                          onClick={() => void handleRevertPreviousStage()}
+                          title={`Volver a "${previousStageMeta.label}"`}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-zinc-700 bg-white hover:bg-zinc-100 border border-zinc-300 disabled:opacity-50 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                        >
+                          <ArrowLeft className="w-3.5 h-3.5" />
+                          <span>{reverting ? 'Retrocediendo...' : 'Retroceder seguimiento'}</span>
+                        </button>
+                      )}
+
+                      {nextShipmentStatus && nextStageMeta && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setShowCustomAdvance((v) => !v)}
+                            disabled={advancing || reverting}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-zinc-700 bg-zinc-100 hover:bg-zinc-200 disabled:opacity-50 rounded-lg transition-colors cursor-pointer"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            {showCustomAdvance ? 'Ocultar detalle' : 'Editar detalle'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={advancing || reverting}
+                            onClick={() => void handleAdvanceNextStage()}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-55 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                          >
+                            <span>{advancing ? 'Avanzando...' : 'Próximo seguimiento'}</span>
+                            <ArrowRight className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
+
+                {/* Courier assignment selector when advancing to Preparado (preparing) */}
+                {isAdmin && nextShipmentStatus === 'preparing' && (
+                  <div className="mb-4 p-4 rounded-xl bg-blue-50/60 border border-blue-200 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <label
+                        htmlFor="assign-delivery-agent"
+                        className="text-xs font-semibold text-zinc-950"
+                      >
+                        ¿Quién realiza el envío al pasar a Preparando?
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setAgentsModalOpen(true)}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:underline cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Cargar / gestionar medios</span>
+                      </button>
+                    </div>
+
+                    <select
+                      id="assign-delivery-agent"
+                      value={selectedAgentId}
+                      onChange={(e) => setSelectedAgentId(e.target.value)}
+                      disabled={advancing || reverting}
+                      className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                    >
+                      <option value="">Sin asignar (despacho estándar)</option>
+                      {availableAgents.map((agent) => (
+                        <option key={agent.id} value={agent.id}>
+                          {getVehicleTypeLabel(agent.vehicleType)} · {agent.fullName} — Patente{' '}
+                          {agent.licensePlate}
+                        </option>
+                      ))}
+                    </select>
+
+                    {availableAgents.length === 0 && (
+                      <p className="text-[11px] text-zinc-600">
+                        Todavía no hay medios de envío disponibles cargados. Usá{' '}
+                        <strong>Cargar / gestionar medios</strong> para registrar moto, auto o
+                        utilitario.
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {isAdmin && nextShipmentStatus && nextStageMeta && showCustomAdvance && (
                   <div className="mb-5 p-4 rounded-xl bg-zinc-50 border border-zinc-200 space-y-3">
@@ -549,14 +747,12 @@ export function ShipmentTrackingView({
                     <div className="flex justify-end">
                       <button
                         type="button"
-                        disabled={advancing}
+                        disabled={advancing || reverting}
                         onClick={() => void handleAdvanceNextStage()}
                         className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-zinc-950 hover:bg-blue-700 disabled:opacity-55 rounded-lg transition-colors cursor-pointer"
                       >
                         <span>
-                          {advancing
-                            ? 'Guardando...'
-                            : `Confirmar: ${nextStageMeta.label}`}
+                          {advancing ? 'Guardando...' : `Confirmar: ${nextStageMeta.label}`}
                         </span>
                         <ArrowRight className="w-3.5 h-3.5" />
                       </button>
@@ -810,6 +1006,15 @@ export function ShipmentTrackingView({
             </div>
           </div>
         </div>
+      )}
+
+      {isAdmin && (
+        <DeliveryAgentsManagerModal
+          open={agentsModalOpen}
+          agents={deliveryAgents}
+          onClose={() => setAgentsModalOpen(false)}
+          onNotifyToast={onNotifyToast}
+        />
       )}
     </div>
   );

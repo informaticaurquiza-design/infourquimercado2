@@ -2,6 +2,7 @@ import type { User } from 'firebase/auth';
 import {
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -33,15 +34,20 @@ import {
   generateOrderNumber,
   generateTrackingCode,
   generateTransactionId,
+  getPreviousShipmentStatus,
+  validateDeliveryAgentInput,
   validateProductInput,
 } from '../lib/validation';
 import type {
   AppNotification,
   AppUser,
+  AssignedCourier,
   CartItem,
   CategoryId,
   DatabaseBackupPayload,
+  DeliveryAgent,
   DeliveryMethod,
+  DeliveryVehicleType,
   NotificationType,
   Order,
   PaymentMethod,
@@ -556,6 +562,7 @@ export async function advanceOrderShipmentStatus(
   nextStatus: ShipmentStatus,
   location: string,
   note: string,
+  assignedCourier?: AssignedCourier,
 ): Promise<void> {
   const orderPath = `orders/${order.id}`;
   const notifId = safeId('ntf');
@@ -580,11 +587,28 @@ export async function advanceOrderShipmentStatus(
           ? 'Mañana antes de las 18:00 hs'
           : order.estimatedDelivery;
 
+  const cleanCourier: AssignedCourier | undefined =
+    assignedCourier &&
+    ID_PATTERN.test(assignedCourier.agentId) &&
+    !validateDeliveryAgentInput({
+      vehicleType: assignedCourier.vehicleType,
+      licensePlate: assignedCourier.licensePlate,
+      fullName: assignedCourier.fullName,
+    })
+      ? {
+          agentId: clampString(assignedCourier.agentId, 128),
+          fullName: clampString(assignedCourier.fullName, 100),
+          vehicleType: assignedCourier.vehicleType,
+          licensePlate: clampString(assignedCourier.licensePlate.toUpperCase(), 16),
+        }
+      : undefined;
+
   try {
     const batch = writeBatch(db);
     batch.update(doc(db, 'orders', order.id), {
       shipmentStatus: nextStatus,
       currentLocation: clampString(location || order.currentLocation, 120),
+      ...(cleanCourier ? { assignedCourier: cleanCourier } : {}),
       estimatedDelivery,
       trackingEvents: updatedEvents,
       updatedAt: serverTimestamp(),
@@ -602,6 +626,119 @@ export async function advanceOrderShipmentStatus(
     await batch.commit();
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, orderPath);
+  }
+}
+
+export async function revertOrderShipmentStatus(order: Order): Promise<void> {
+  const previousStatus = getPreviousShipmentStatus(order.shipmentStatus);
+  if (!previousStatus) {
+    throw new Error('Este pedido ya se encuentra en su etapa inicial y no puede retroceder más.');
+  }
+
+  const orderPath = `orders/${order.id}`;
+  const currentStatus = order.shipmentStatus;
+  const trimmedEvents = [...order.trackingEvents];
+  while (
+    trimmedEvents.length > 1 &&
+    trimmedEvents[trimmedEvents.length - 1]?.status === currentStatus
+  ) {
+    trimmedEvents.pop();
+  }
+  const lastEvent = trimmedEvents[trimmedEvents.length - 1];
+  const isPickup = order.deliveryMethod === 'pickup' || order.carrier === 'Retiro en domicilio';
+  const restoredLocation = clampString(
+    lastEvent?.location ||
+      (isPickup
+        ? 'Listo para coordinar retiro en domicilio'
+        : 'Depósito Central — Reserva confirmada'),
+    120,
+  );
+  const estimatedDelivery =
+    previousStatus === 'out_for_delivery'
+      ? 'Hoy antes de las 20:00 hs'
+      : previousStatus === 'in_transit'
+        ? 'Mañana antes de las 18:00 hs'
+        : isPickup
+          ? 'A coordinar por contacto'
+          : '3 a 5 días hábiles';
+
+  try {
+    await updateDoc(doc(db, 'orders', order.id), {
+      shipmentStatus: previousStatus,
+      currentLocation: restoredLocation,
+      estimatedDelivery,
+      trackingEvents: trimmedEvents,
+      ...(previousStatus === 'confirmed' ? { assignedCourier: deleteField() } : {}),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, orderPath);
+  }
+}
+
+export async function createOrUpdateDeliveryAgent(input: {
+  id?: string;
+  vehicleType: DeliveryVehicleType;
+  licensePlate: string;
+  fullName: string;
+  active: boolean;
+}): Promise<DeliveryAgent> {
+  const licensePlate = clampString(input.licensePlate.toUpperCase(), 16);
+  const fullName = clampString(input.fullName, 100);
+  const errMsg = validateDeliveryAgentInput({
+    vehicleType: input.vehicleType,
+    licensePlate,
+    fullName,
+  });
+  if (errMsg) {
+    throw new Error(errMsg);
+  }
+
+  const agentId = input.id && ID_PATTERN.test(input.id) ? input.id : safeId('drv');
+  const agentPath = `deliveryAgents/${agentId}`;
+  const ref = doc(db, 'deliveryAgents', agentId);
+  const nowIso = new Date().toISOString();
+
+  const commonFields = {
+    vehicleType: input.vehicleType,
+    licensePlate,
+    fullName,
+    active: Boolean(input.active),
+    updatedAt: serverTimestamp(),
+  };
+
+  try {
+    if (input.id) {
+      await updateDoc(ref, commonFields);
+    } else {
+      await setDoc(ref, {
+        ...commonFields,
+        createdAt: serverTimestamp(),
+      });
+    }
+    return {
+      id: agentId,
+      vehicleType: input.vehicleType,
+      licensePlate,
+      fullName,
+      active: Boolean(input.active),
+      updatedAt: nowIso,
+    };
+  } catch (error) {
+    handleFirestoreError(
+      error,
+      input.id ? OperationType.UPDATE : OperationType.CREATE,
+      agentPath,
+    );
+  }
+}
+
+export async function deleteDeliveryAgentById(agentId: string): Promise<void> {
+  const agentPath = `deliveryAgents/${agentId}`;
+  try {
+    await deleteDoc(doc(db, 'deliveryAgents', agentId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, agentPath);
   }
 }
 

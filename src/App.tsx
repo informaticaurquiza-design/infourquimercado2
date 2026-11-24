@@ -68,6 +68,7 @@ import type {
   CartItem,
   CategoryId,
   DatabaseMode,
+  DeliveryAgent,
   LocalServerInfo,
   Order,
   Product,
@@ -218,6 +219,7 @@ function AppContent() {
   const [cloudProductsLoading, setCloudProductsLoading] = useState(true);
   const [cloudOrders, setCloudOrders] = useState<Order[]>([]);
   const [cloudAccounts, setCloudAccounts] = useState<UserProfile[]>([]);
+  const [cloudDeliveryAgents, setCloudDeliveryAgents] = useState<DeliveryAgent[]>([]);
   const [cloudSubscriptionPayments, setCloudSubscriptionPayments] = useState<SubscriptionPayment[]>(
     [],
   );
@@ -238,6 +240,7 @@ function AppContent() {
   const [localProductsLoading, setLocalProductsLoading] = useState(true);
   const [localOrders, setLocalOrders] = useState<Order[]>([]);
   const [localAccounts, setLocalAccounts] = useState<UserProfile[]>([]);
+  const [localDeliveryAgents, setLocalDeliveryAgents] = useState<DeliveryAgent[]>([]);
   const [localSubscriptionPayments, setLocalSubscriptionPayments] = useState<SubscriptionPayment[]>(
     [],
   );
@@ -360,6 +363,7 @@ function AppContent() {
       setLocalProductsLoading(false);
       setLocalOrders(sortedOrders);
       setLocalAccounts(Array.isArray(payload.accounts) ? payload.accounts : []);
+      setLocalDeliveryAgents(Array.isArray(payload.deliveryAgents) ? payload.deliveryAgents : []);
       setLocalSubscriptionPayments(sortedSubPayments);
       setLocalShippingSettings(payload.shippingSettings);
       setLocalIsAdmin(payload.isAdmin);
@@ -719,6 +723,30 @@ function AppContent() {
     return () => unsubscribe();
   }, [dbMode, cloudAuthReady, cloudIsAdmin]);
 
+  // 4e. Real-time Delivery Agents (Medios de Envío) Listener (Cloud Mode Admin only)
+  useEffect(() => {
+    if (dbMode !== 'cloud' || !cloudAuthReady || !cloudIsAdmin) {
+      setCloudDeliveryAgents([]);
+      return;
+    }
+    const unsubscribe = onSnapshot(
+      query(collection(db, 'deliveryAgents')),
+      (snapshot) => {
+        const list = snapshot.docs
+          .map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<DeliveryAgent, 'id'>),
+          }))
+          .sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt));
+        setCloudDeliveryAgents(list);
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'deliveryAgents');
+      },
+    );
+    return () => unsubscribe();
+  }, [dbMode, cloudAuthReady, cloudIsAdmin]);
+
   const cloudAllNotifications = useMemo(() => {
     const merged = [...cloudPersonalNotifications, ...cloudBroadcastNotifications];
     const uniqueMap = new Map<string, AppNotification>();
@@ -741,6 +769,8 @@ function AppContent() {
   const activeProductsLoading = dbMode === 'local' ? localProductsLoading : cloudProductsLoading;
   const activeOrders = dbMode === 'local' ? localOrders : cloudOrders;
   const activeAccounts = dbMode === 'local' ? localAccounts : cloudAccounts;
+  const activeDeliveryAgents =
+    dbMode === 'local' ? localDeliveryAgents : cloudDeliveryAgents;
   const activeSubscriptionPayments =
     dbMode === 'local' ? localSubscriptionPayments : cloudSubscriptionPayments;
   const activeNotifications = dbMode === 'local' ? localNotifications : cloudAllNotifications;
@@ -1237,6 +1267,7 @@ function AppContent() {
             user={activeUser}
             isAdmin={activeIsAdmin}
             orders={activeOrders}
+            deliveryAgents={activeDeliveryAgents}
             initialSelectedOrderId={trackedOrderId}
             onRequireSignIn={() => setAccountOpen(true)}
             onNotifyToast={showToast}

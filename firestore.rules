@@ -152,6 +152,29 @@ service cloud.firestore {
         && receipt.uploadedAt is string && receipt.uploadedAt.size() <= 40;
     }
 
+    function isValidAssignedCourier(courier) {
+      return courier is map
+        && courier.keys().hasAll(['agentId', 'fullName', 'vehicleType', 'licensePlate'])
+        && courier.keys().hasOnly(['agentId', 'fullName', 'vehicleType', 'licensePlate'])
+        && isValidId(courier.agentId)
+        && courier.fullName is string && courier.fullName.size() >= 2 && courier.fullName.size() <= 100
+        && courier.vehicleType is string && courier.vehicleType in ['moto', 'auto', 'utilitario']
+        && courier.licensePlate is string && courier.licensePlate.size() >= 4 && courier.licensePlate.size() <= 16
+        && courier.licensePlate.matches('^[A-Z0-9 \\-]+$');
+    }
+
+    function isValidDeliveryAgent(data) {
+      return data.keys().hasAll(['vehicleType', 'licensePlate', 'fullName', 'active', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['vehicleType', 'licensePlate', 'fullName', 'active', 'createdAt', 'updatedAt'])
+        && data.vehicleType is string && data.vehicleType in ['moto', 'auto', 'utilitario']
+        && data.licensePlate is string && data.licensePlate.size() >= 4 && data.licensePlate.size() <= 16
+        && data.licensePlate.matches('^[A-Z0-9 \\-]+$')
+        && data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 100
+        && data.active is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     function isValidOrder(data) {
       return data.keys().hasAll([
         'orderNumber', 'trackingCode', 'userId', 'customerName', 'customerEmail',
@@ -166,8 +189,8 @@ service cloud.firestore {
         'shippingPhone', 'shippingAddress', 'shippingCity', 'shippingPostalCode',
         'shippingNotes', 'deliveryMethod', 'items', 'subtotal', 'discount', 'shippingCost', 'total',
         'paymentMethod', 'paymentBrand', 'paymentLast4', 'installments', 'transactionId',
-        'paymentStatus', 'paymentReceipt', 'shipmentStatus', 'carrier', 'estimatedDelivery',
-        'currentLocation', 'trackingEvents', 'createdAt', 'updatedAt'
+        'paymentStatus', 'paymentReceipt', 'shipmentStatus', 'carrier', 'assignedCourier',
+        'estimatedDelivery', 'currentLocation', 'trackingEvents', 'createdAt', 'updatedAt'
       ])
       && data.orderNumber is string && data.orderNumber.size() <= 24 && data.orderNumber.matches('^ALB-[0-9]{4}-[0-9]{4}$')
       && data.trackingCode is string && data.trackingCode.size() <= 24 && data.trackingCode.matches('^TRK-[A-Z0-9]{8}$')
@@ -195,6 +218,7 @@ service cloud.firestore {
       && (!('paymentReceipt' in data) || isValidPaymentReceipt(data.paymentReceipt))
       && data.shipmentStatus is string && data.shipmentStatus in ['confirmed', 'preparing', 'in_transit', 'out_for_delivery', 'delivered', 'cancelled']
       && data.carrier is string && data.carrier.size() >= 2 && data.carrier.size() <= 60
+      && (!('assignedCourier' in data) || isValidAssignedCourier(data.assignedCourier))
       && data.estimatedDelivery is string && data.estimatedDelivery.size() >= 2 && data.estimatedDelivery.size() <= 40
       && data.currentLocation is string && data.currentLocation.size() >= 2 && data.currentLocation.size() <= 120
       && data.trackingEvents is list && data.trackingEvents.size() >= 1 && data.trackingEvents.size() <= 15
@@ -504,6 +528,25 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && isAdmin();
       allow delete: if isValidId(settingId) && isAdmin();
+    }
+
+    // --- Collection: deliveryAgents ---
+    match /deliveryAgents/{agentId} {
+      allow get: if isValidId(agentId) && isAdmin();
+      allow list: if isBootstrappedAdmin();
+      allow create: if isValidId(agentId)
+        && isVerifiedUser()
+        && isAdmin()
+        && isValidDeliveryAgent(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(agentId)
+        && isVerifiedUser()
+        && isAdmin()
+        && isValidDeliveryAgent(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(agentId) && isVerifiedUser() && isAdmin();
     }
   }
 }

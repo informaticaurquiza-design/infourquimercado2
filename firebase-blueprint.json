@@ -225,6 +225,10 @@
           "type": "string",
           "maxLength": 60
         },
+        "assignedCourier": {
+          "type": "object",
+          "description": "Optional assigned delivery agent (vehicle type, license plate, full name) selected when preparing the shipment."
+        },
         "estimatedDelivery": {
           "type": "string",
           "maxLength": 40
@@ -539,6 +543,47 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "DeliveryAgent": {
+      "title": "DeliveryAgent",
+      "description": "Registered delivery vehicle and driver (moto, auto, or utilitario) managed by store administrators.",
+      "type": "object",
+      "properties": {
+        "vehicleType": {
+          "type": "string",
+          "enum": ["moto", "auto", "utilitario"]
+        },
+        "licensePlate": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 16,
+          "pattern": "^[A-Z0-9 \\-]+$"
+        },
+        "fullName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "vehicleType",
+        "licensePlate",
+        "fullName",
+        "active",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -569,6 +614,10 @@
     "/subscriptionPayments/{paymentId}": {
       "schema": { "$ref": "#/entities/SubscriptionPayment" },
       "description": "Monthly seller subscription payments ($5000) with cash reference or transfer receipt."
+    },
+    "/deliveryAgents/{agentId}": {
+      "schema": { "$ref": "#/entities/DeliveryAgent" },
+      "description": "Fleet of delivery vehicles and drivers (moto, auto, utilitario) managed by admins for order dispatch."
     }
   }
 }

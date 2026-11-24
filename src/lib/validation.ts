@@ -1,10 +1,16 @@
-import type { CategoryId, ShipmentStatus, UserProfile } from '../types/ecommerce';
+import type {
+  CategoryId,
+  DeliveryVehicleType,
+  ShipmentStatus,
+  UserProfile,
+} from '../types/ecommerce';
 
 // Synchronized verbatim with firebase-blueprint.json & firestore.rules
 export const SKU_PATTERN = /^[A-Z0-9-]+$/;
 export const ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 export const ORDER_NUMBER_PATTERN = /^ALB-[0-9]{4}-[0-9]{4}$/;
 export const TRACKING_CODE_PATTERN = /^TRK-[A-Z0-9]{8}$/;
+export const LICENSE_PLATE_PATTERN = /^[A-Z0-9 -]{4,16}$/;
 
 export const FREE_SHIPPING_THRESHOLD = 150000;
 export const STANDARD_SHIPPING_COST = 8500;
@@ -187,6 +193,51 @@ export function getNextShipmentStatus(current: ShipmentStatus): ShipmentStatus |
     default:
       return null;
   }
+}
+
+export function getPreviousShipmentStatus(current: ShipmentStatus): ShipmentStatus | null {
+  switch (current) {
+    case 'delivered':
+      return 'out_for_delivery';
+    case 'out_for_delivery':
+      return 'in_transit';
+    case 'in_transit':
+      return 'preparing';
+    case 'preparing':
+      return 'confirmed';
+    default:
+      return null;
+  }
+}
+
+export function getVehicleTypeLabel(vehicleType: DeliveryVehicleType): string {
+  switch (vehicleType) {
+    case 'moto':
+      return 'Moto';
+    case 'auto':
+      return 'Auto';
+    case 'utilitario':
+      return 'Utilitario';
+  }
+}
+
+export function validateDeliveryAgentInput(input: {
+  vehicleType: string;
+  licensePlate: string;
+  fullName: string;
+}): string | null {
+  if (!['moto', 'auto', 'utilitario'].includes(input.vehicleType)) {
+    return 'Seleccioná un tipo de vehículo válido (Moto, Auto o Utilitario).';
+  }
+  const plate = input.licensePlate.trim().toUpperCase();
+  if (plate.length < 4 || plate.length > 16 || !LICENSE_PLATE_PATTERN.test(plate)) {
+    return 'Ingresá una patente válida (entre 4 y 16 caracteres, letras y números).';
+  }
+  const name = input.fullName.trim();
+  if (name.length < 2 || name.length > 100) {
+    return 'Ingresá el nombre completo del repartidor (entre 2 y 100 caracteres).';
+  }
+  return null;
 }
 
 function parseTimestampValue(value: unknown): Date | null {
