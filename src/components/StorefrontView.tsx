@@ -15,7 +15,7 @@ import {
   Tag,
   X,
 } from 'lucide-react';
-import { HERO_BANNER_SLIDES, type HeroBannerSlide } from '../lib/categoryAssets';
+import { HERO_BANNER_SLIDES } from '../lib/categoryAssets';
 import { getProductGallery } from '../lib/imageTools';
 import type { PushPermissionState } from '../lib/pushNotifications';
 import {
@@ -56,6 +56,15 @@ interface StorefrontViewProps {
 }
 
 type SortOption = 'featured' | 'price_asc' | 'price_desc' | 'bestselling';
+
+interface ProductBannerSlide {
+  id: string;
+  src: string;
+  alt: string;
+  caption: string;
+  productId?: string;
+  isEditorialFallback?: boolean;
+}
 
 function shuffleItems<T>(items: T[]): T[] {
   const copy = [...items];
@@ -198,11 +207,58 @@ export function StorefrontView({
   const [detailImageIndex, setDetailImageIndex] = useState(0);
   const [cardQuantities, setCardQuantities] = useState<Record<string, string>>({});
   const [recentlyAdded, setRecentlyAdded] = useState<{ id: string; qty: number } | null>(null);
-  const [heroBannerSlides] = useState<HeroBannerSlide[]>(() =>
-    shuffleItems(HERO_BANNER_SLIDES),
+
+  const productImagePool = useMemo<ProductBannerSlide[]>(() => {
+    const seenSrc = new Set<string>();
+    const pool: ProductBannerSlide[] = [];
+    for (const product of products) {
+      const gallery = getProductGallery(product);
+      gallery.forEach((src, imgIdx) => {
+        const trimmed = src.trim();
+        if (!trimmed || seenSrc.has(trimmed)) return;
+        seenSrc.add(trimmed);
+        pool.push({
+          id: `${product.id}-img-${imgIdx}`,
+          src: trimmed,
+          alt: product.name,
+          caption: `${product.name} · ${formatCurrency(product.price)}`,
+          productId: product.id,
+        });
+      });
+    }
+    return pool;
+  }, [products]);
+
+  const productImagePoolKey = useMemo(
+    () =>
+      productImagePool
+        .map((slide) => `${slide.id}:${slide.src.slice(0, 48)}:${slide.src.length}`)
+        .join('|'),
+    [productImagePool],
   );
+
+  const heroBannerSlides = useMemo<ProductBannerSlide[]>(() => {
+    if (productImagePool.length > 0) {
+      return shuffleItems(productImagePool).slice(0, 10);
+    }
+    return shuffleItems(HERO_BANNER_SLIDES)
+      .slice(0, 10)
+      .map((slide) => ({
+        id: slide.id,
+        src: slide.src,
+        alt: slide.alt,
+        caption: slide.caption,
+        isEditorialFallback: true,
+      }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productImagePoolKey]);
+
   const [heroSlideIndex, setHeroSlideIndex] = useState(0);
   const handledSharedProductRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    setHeroSlideIndex(0);
+  }, [heroBannerSlides]);
 
   useEffect(() => {
     if (heroBannerSlides.length <= 1) return;
@@ -210,7 +266,11 @@ export function StorefrontView({
       setHeroSlideIndex((prev) => (prev + 1) % heroBannerSlides.length);
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [heroBannerSlides.length]);
+  }, [heroBannerSlides]);
+
+  const safeHeroSlideIndex =
+    heroBannerSlides.length > 0 ? heroSlideIndex % heroBannerSlides.length : 0;
+  const activeHeroSlide = heroBannerSlides[safeHeroSlideIndex] ?? null;
 
   useEffect(() => {
     if (typeof window === 'undefined' || products.length === 0) return;
@@ -529,76 +589,101 @@ export function StorefrontView({
           </div>
 
           <div className="lg:col-span-7">
-            <div className="group relative h-72 sm:h-96 lg:h-full min-h-[340px] rounded-xl overflow-hidden bg-zinc-100 border border-zinc-200">
+            <div className="group relative h-72 sm:h-96 lg:h-full min-h-[340px] rounded-xl overflow-hidden bg-zinc-50 border border-zinc-200">
               {heroBannerSlides.map((slide, idx) => {
-                const isActive = idx === heroSlideIndex;
+                const isActive = idx === safeHeroSlideIndex;
+                const linkedProduct = slide.productId
+                  ? products.find((p) => p.id === slide.productId) ?? null
+                  : null;
                 return (
                   <div
                     key={slide.id}
                     aria-hidden={!isActive}
-                    className={`absolute inset-0 transition-opacity duration-500 ease-out ${
+                    onClick={linkedProduct ? () => openProductDetail(linkedProduct) : undefined}
+                    className={`absolute inset-0 flex items-center justify-center transition-opacity duration-500 ease-out ${
+                      slide.isEditorialFallback ? 'bg-zinc-100' : 'bg-zinc-50'
+                    } ${linkedProduct ? 'cursor-pointer' : ''} ${
                       isActive ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
                     }`}
                   >
                     <ProductImage
                       src={slide.src}
                       alt={slide.alt}
-                      fit="cover"
-                      className="w-full h-full object-cover"
+                      fit={slide.isEditorialFallback ? 'cover' : 'contain'}
+                      className={
+                        slide.isEditorialFallback
+                          ? 'w-full h-full object-cover'
+                          : 'w-full h-full object-contain object-center'
+                      }
                     />
                   </div>
                 );
               })}
 
               {/* Subtle Previous / Next Arrows on Hover */}
-              <button
-                type="button"
-                onClick={() =>
-                  setHeroSlideIndex(
-                    (prev) => (prev - 1 + heroBannerSlides.length) % heroBannerSlides.length,
-                  )
-                }
-                aria-label="Imagen anterior del banner"
-                className="absolute left-3 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-zinc-950/55 hover:bg-zinc-950/80 text-white inline-flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  setHeroSlideIndex((prev) => (prev + 1) % heroBannerSlides.length)
-                }
-                aria-label="Siguiente imagen del banner"
-                className="absolute right-3 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-zinc-950/55 hover:bg-zinc-950/80 text-white inline-flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
+              {heroBannerSlides.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setHeroSlideIndex(
+                        (prev) => (prev - 1 + heroBannerSlides.length) % heroBannerSlides.length,
+                      );
+                    }}
+                    aria-label="Imagen anterior del banner"
+                    className="absolute left-3 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-zinc-950/55 hover:bg-zinc-950/80 text-white inline-flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setHeroSlideIndex((prev) => (prev + 1) % heroBannerSlides.length);
+                    }}
+                    aria-label="Siguiente imagen del banner"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-zinc-950/55 hover:bg-zinc-950/80 text-white inline-flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </>
+              )}
 
-              {/* Bottom Caption & 10-Slide Progress Indicators */}
-              <div className="absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-zinc-950/70 via-zinc-950/25 to-transparent px-4 pt-8 pb-3 flex items-end justify-between gap-3">
+              {/* Bottom Caption & Progress Indicators */}
+              <div className="absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-zinc-950/75 via-zinc-950/35 to-transparent px-4 pt-8 pb-3 flex items-end justify-between gap-3 pointer-events-none">
                 <span className="text-xs font-medium text-white/95 truncate">
-                  {heroBannerSlides[heroSlideIndex]?.caption}
+                  {activeHeroSlide?.caption}
                 </span>
-                <div className="flex items-center gap-1.5 shrink-0" role="tablist" aria-label="Imágenes del banner">
-                  {heroBannerSlides.map((slide, idx) => {
-                    const isActive = idx === heroSlideIndex;
-                    return (
-                      <button
-                        key={slide.id}
-                        type="button"
-                        role="tab"
-                        aria-selected={isActive}
-                        aria-label={`Ver imagen ${idx + 1} de ${heroBannerSlides.length}: ${slide.caption}`}
-                        onClick={() => setHeroSlideIndex(idx)}
-                        className={`h-1.5 rounded-full transition-all cursor-pointer ${
-                          isActive
-                            ? 'w-5 bg-white'
-                            : 'w-1.5 bg-white/45 hover:bg-white/80'
-                        }`}
-                      />
-                    );
-                  })}
-                </div>
+                {heroBannerSlides.length > 1 && (
+                  <div
+                    className="flex items-center gap-1.5 shrink-0 pointer-events-auto"
+                    role="tablist"
+                    aria-label="Imágenes del banner"
+                  >
+                    {heroBannerSlides.map((slide, idx) => {
+                      const isActive = idx === safeHeroSlideIndex;
+                      return (
+                        <button
+                          key={slide.id}
+                          type="button"
+                          role="tab"
+                          aria-selected={isActive}
+                          aria-label={`Ver imagen ${idx + 1} de ${heroBannerSlides.length}: ${slide.caption}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setHeroSlideIndex(idx);
+                          }}
+                          className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                            isActive
+                              ? 'w-5 bg-white'
+                              : 'w-1.5 bg-white/45 hover:bg-white/80'
+                          }`}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           </div>
