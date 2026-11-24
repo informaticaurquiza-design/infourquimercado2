@@ -433,6 +433,24 @@ service cloud.firestore {
             && incoming().shipmentStatus == 'cancelled'
             && incoming().diff(existing()).affectedKeys().hasOnly(['shipmentStatus', 'trackingEvents', 'updatedAt'])
           )
+          || (
+            'sellerIds' in existing()
+            && existing().sellerIds is list
+            && request.auth.uid in existing().sellerIds
+            && existing().shipmentStatus != 'cancelled'
+            && incoming().shipmentStatus in ['confirmed', 'preparing', 'in_transit', 'out_for_delivery', 'delivered']
+            && (
+              !('assignedCourier' in incoming())
+              || ('assignedCourier' in existing() && incoming().assignedCourier == existing().assignedCourier)
+              || (
+                exists(/databases/$(database)/documents/deliveryAgents/$(incoming().assignedCourier.agentId))
+                && get(/databases/$(database)/documents/deliveryAgents/$(incoming().assignedCourier.agentId)).data.ownerId == request.auth.uid
+              )
+            )
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'shipmentStatus', 'currentLocation', 'assignedCourier', 'estimatedDelivery', 'trackingEvents', 'updatedAt'
+            ])
+          )
         );
       allow delete: if isValidId(orderId) && isAdmin();
     }
@@ -456,6 +474,15 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && (
           (incoming().userId == request.auth.uid && incoming().type == 'order' && incoming().read == false)
+          || (
+            incoming().type == 'shipment'
+            && incoming().read == false
+            && isValidId(incoming().orderId)
+            && exists(/databases/$(database)/documents/orders/$(incoming().orderId))
+            && get(/databases/$(database)/documents/orders/$(incoming().orderId)).data.userId == incoming().userId
+            && 'sellerIds' in get(/databases/$(database)/documents/orders/$(incoming().orderId)).data
+            && request.auth.uid in get(/databases/$(database)/documents/orders/$(incoming().orderId)).data.sellerIds
+          )
           || isAdmin()
         );
       allow update: if isValidId(notificationId)
@@ -578,7 +605,7 @@ service cloud.firestore {
     match /deliveryAgents/{agentId} {
       allow get: if isValidId(agentId) && isSignedIn() && (
         ('ownerId' in existing() && existing().ownerId == request.auth.uid)
-        || isAdmin()
+        || (!('ownerId' in existing()) && isAdmin())
       );
       allow list: if isSignedIn() && (
         existing().ownerId == request.auth.uid
@@ -589,10 +616,8 @@ service cloud.firestore {
         && isValidDeliveryAgent(incoming())
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
-        && (
-          ('ownerId' in incoming() && incoming().ownerId == request.auth.uid)
-          || isAdmin()
-        );
+        && 'ownerId' in incoming()
+        && incoming().ownerId == request.auth.uid;
       allow update: if isValidId(agentId)
         && isVerifiedUser()
         && isValidDeliveryAgent(incoming())
@@ -605,13 +630,18 @@ service cloud.firestore {
             && 'ownerId' in incoming()
             && incoming().ownerId == existing().ownerId
           )
-          || isAdmin()
+          || (
+            !('ownerId' in existing())
+            && isAdmin()
+            && 'ownerId' in incoming()
+            && incoming().ownerId == request.auth.uid
+          )
         );
       allow delete: if isValidId(agentId)
         && isVerifiedUser()
         && (
           ('ownerId' in existing() && existing().ownerId == request.auth.uid)
-          || isAdmin()
+          || (!('ownerId' in existing()) && isAdmin())
         );
     }
 

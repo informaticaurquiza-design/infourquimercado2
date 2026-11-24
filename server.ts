@@ -1711,12 +1711,14 @@ app.put('/api/local/delivery-agents/:id', async (req, res) => {
       const idx = db.deliveryAgents.findIndex((a) => a.id === agentId);
       if (idx === -1) throw new Error('NOT_FOUND');
       const existing = db.deliveryAgents[idx];
-      if (session.role !== 'admin' && existing.ownerId !== session.uid) {
+      const isOwner =
+        existing.ownerId === session.uid || (!existing.ownerId && session.role === 'admin');
+      if (!isOwner) {
         throw new Error('FORBIDDEN');
       }
       const next: DeliveryAgent = {
         ...existing,
-        ownerId: existing.ownerId,
+        ownerId: existing.ownerId || session.uid,
         vehicleType,
         licensePlate,
         fullName,
@@ -1747,7 +1749,9 @@ app.delete('/api/local/delivery-agents/:id', async (req, res) => {
     await withDbWriteLock((db) => {
       const target = db.deliveryAgents.find((a) => a.id === agentId);
       if (!target) throw new Error('NOT_FOUND');
-      if (session.role !== 'admin' && target.ownerId !== session.uid) {
+      const isOwner =
+        target.ownerId === session.uid || (!target.ownerId && session.role === 'admin');
+      if (!isOwner) {
         throw new Error('FORBIDDEN');
       }
       db.deliveryAgents = db.deliveryAgents.filter((a) => a.id !== agentId);
@@ -1943,7 +1947,7 @@ app.delete('/api/local/benefits/:id', async (req, res) => {
 });
 
 app.patch('/api/local/orders/:id/advance', async (req, res) => {
-  const session = requireAdmin(req, res);
+  const session = requireAuth(req, res);
   if (!session) return;
 
   const orderId = String(req.params.id || '');
@@ -1957,12 +1961,44 @@ app.patch('/api/local/orders/:id/advance', async (req, res) => {
     return;
   }
 
-  const assignedCourier = sanitizeAssignedCourier(req.body?.assignedCourier);
+  const requestedCourier = sanitizeAssignedCourier(req.body?.assignedCourier);
 
   try {
     await withDbWriteLock((db) => {
       const order = db.orders.find((o) => o.id === orderId);
       if (!order) throw new Error('NOT_FOUND');
+
+      const productsById = new Map(db.products.map((p) => [p.id, p]));
+      const isOrderSeller =
+        (Array.isArray(order.sellerIds) && order.sellerIds.includes(session.uid)) ||
+        order.items.some((it) => {
+          const resolvedSellerId = it.sellerId || productsById.get(it.productId)?.sellerId;
+          return resolvedSellerId === session.uid;
+        });
+
+      if (session.role !== 'admin' && !isOrderSeller) {
+        throw new Error('FORBIDDEN');
+      }
+      if (session.role !== 'admin' && (order.shipmentStatus === 'cancelled' || nextStatus === 'cancelled')) {
+        throw new Error('FORBIDDEN');
+      }
+
+      let verifiedCourier: AssignedCourier | undefined;
+      if (requestedCourier) {
+        const agent = db.deliveryAgents.find((a) => a.id === requestedCourier.agentId);
+        const ownsAgent =
+          Boolean(agent) &&
+          (agent!.ownerId === session.uid || (!agent!.ownerId && session.role === 'admin'));
+        if (!agent || !ownsAgent) {
+          throw new Error('INVALID_AGENT');
+        }
+        verifiedCourier = {
+          agentId: agent.id,
+          fullName: agent.fullName,
+          vehicleType: agent.vehicleType,
+          licensePlate: agent.licensePlate,
+        };
+      }
 
       const stageMeta = SHIPMENT_PIPELINE.find((s) => s.status === nextStatus);
       const label =
@@ -1976,8 +2012,8 @@ app.patch('/api/local/orders/:id/advance', async (req, res) => {
 
       order.shipmentStatus = nextStatus;
       order.currentLocation = location;
-      if (assignedCourier) {
-        order.assignedCourier = assignedCourier;
+      if (verifiedCourier) {
+        order.assignedCourier = verifiedCourier;
       }
       order.estimatedDelivery =
         nextStatus === 'delivered'
@@ -2009,13 +2045,26 @@ app.patch('/api/local/orders/:id/advance', async (req, res) => {
     broadcastDbChange('orders');
     broadcastDbChange('notifications');
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    const code = err instanceof Error ? err.message : '';
+    if (code === 'INVALID_AGENT') {
+      res.status(403).json({
+        error: 'Solo podés asignar medios de envío cargados en tu propia cuenta.',
+      });
+      return;
+    }
+    if (code === 'FORBIDDEN') {
+      res.status(403).json({
+        error: 'Solo el vendedor del artículo o un administrador puede actualizar este seguimiento.',
+      });
+      return;
+    }
     res.status(404).json({ error: 'Pedido no encontrado.' });
   }
 });
 
 app.patch('/api/local/orders/:id/revert', async (req, res) => {
-  const session = requireAdmin(req, res);
+  const session = requireAuth(req, res);
   if (!session) return;
 
   const orderId = String(req.params.id || '');
@@ -2023,6 +2072,18 @@ app.patch('/api/local/orders/:id/revert', async (req, res) => {
     await withDbWriteLock((db) => {
       const order = db.orders.find((o) => o.id === orderId);
       if (!order) throw new Error('NOT_FOUND');
+
+      const productsById = new Map(db.products.map((p) => [p.id, p]));
+      const isOrderSeller =
+        (Array.isArray(order.sellerIds) && order.sellerIds.includes(session.uid)) ||
+        order.items.some((it) => {
+          const resolvedSellerId = it.sellerId || productsById.get(it.productId)?.sellerId;
+          return resolvedSellerId === session.uid;
+        });
+
+      if (session.role !== 'admin' && !isOrderSeller) {
+        throw new Error('FORBIDDEN');
+      }
 
       const previousStatus = getPreviousShipmentStatus(order.shipmentStatus);
       if (!previousStatus) throw new Error('CANNOT_REVERT');
@@ -2065,7 +2126,14 @@ app.patch('/api/local/orders/:id/revert', async (req, res) => {
     broadcastDbChange('orders');
     res.json({ ok: true });
   } catch (err) {
-    if (err instanceof Error && err.message === 'CANNOT_REVERT') {
+    const code = err instanceof Error ? err.message : '';
+    if (code === 'FORBIDDEN') {
+      res.status(403).json({
+        error: 'Solo el vendedor del artículo o un administrador puede retroceder este seguimiento.',
+      });
+      return;
+    }
+    if (code === 'CANNOT_REVERT') {
       res.status(400).json({
         error: 'Este pedido ya se encuentra en su etapa inicial y no puede retroceder más.',
       });

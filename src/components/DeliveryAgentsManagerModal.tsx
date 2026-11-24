@@ -51,6 +51,10 @@ export function DeliveryAgentsManagerModal({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
 
+  const ownAgents = user
+    ? agents.filter((agent) => !agent.ownerId || agent.ownerId === user.uid)
+    : [];
+
   useEffect(() => {
     if (!open) {
       resetForm();
@@ -156,13 +160,13 @@ export function DeliveryAgentsManagerModal({
               id="delivery-agents-abm-title"
               className="font-display text-base font-bold text-zinc-950"
             >
-              ABM de Medios de Envío
+              Mis medios de envío (ABM)
             </h2>
             <p className="text-xs text-zinc-500 mt-0.5">
               Registrá tus motos, autos o utilitarios con patente y conductor
               {user?.displayName || user?.email
                 ? ` — cuenta: ${user.displayName?.trim() || user.email}`
-                : ''}. Cada cuenta gestiona únicamente sus propios medios de envío.
+                : ''}. Cada cliente administra y visualiza exclusivamente sus propios medios de envío.
             </p>
           </div>
           <button
@@ -302,24 +306,24 @@ export function DeliveryAgentsManagerModal({
           <div>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xs font-semibold text-zinc-900">
-                Medios registrados ({agents.length})
+                Mis medios registrados ({ownAgents.length})
               </h3>
             </div>
 
-            {agents.length === 0 ? (
+            {ownAgents.length === 0 ? (
               <div className="p-8 rounded-xl border border-dashed border-zinc-300 text-center">
                 <Truck className="w-8 h-8 text-zinc-300 mx-auto mb-2 stroke-[1.5]" />
                 <p className="text-xs font-medium text-zinc-700">
-                  Todavía no cargaste medios de envío
+                  Todavía no cargaste medios de envío en tu cuenta
                 </p>
                 <p className="text-[11px] text-zinc-500 mt-1">
                   Agregá tu primera moto, auto o utilitario arriba para poder seleccionarlo al
-                  preparar cada pedido.
+                  preparar tus pedidos.
                 </p>
               </div>
             ) : (
               <div className="border border-zinc-200 rounded-xl divide-y divide-zinc-100 overflow-hidden">
-                {agents.map((agent) => (
+                {ownAgents.map((agent) => (
                   <div
                     key={agent.id}
                     className={`p-3.5 flex items-center justify-between gap-3 bg-white hover:bg-zinc-50/70 ${

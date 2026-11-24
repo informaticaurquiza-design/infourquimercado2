@@ -196,6 +196,9 @@ export function ShipmentTrackingView({
   const canViewShippingTicket = Boolean(
     user && activeOrder && sellerItemsForActiveOrder.length > 0,
   );
+  const canManageActiveOrderShipment = Boolean(
+    user && activeOrder && (isAdmin || sellerItemsForActiveOrder.length > 0),
+  );
   const hasAnySellerOrders = useMemo(
     () =>
       !isAdmin &&
@@ -221,7 +224,16 @@ export function ShipmentTrackingView({
     ? getShipmentStatusMeta(previousShipmentStatus)
     : null;
 
-  const availableAgents = deliveryAgents.filter((a) => a.active);
+  const ownDeliveryAgents = useMemo(
+    () =>
+      !user
+        ? []
+        : deliveryAgents.filter(
+            (a) => a.ownerId === user.uid || (!a.ownerId && isAdmin),
+          ),
+    [deliveryAgents, user, isAdmin],
+  );
+  const availableAgents = ownDeliveryAgents.filter((a) => a.active);
 
   useEffect(() => {
     if (!canViewShippingTicket) {
@@ -291,14 +303,14 @@ export function ShipmentTrackingView({
   }
 
   async function handleAdvanceNextStage() {
-    if (!activeOrder || !nextShipmentStatus || !isAdmin || advancing || reverting) return;
+    if (!activeOrder || !nextShipmentStatus || !canManageActiveOrderShipment || advancing || reverting) return;
     setAdvanceError('');
     setAdvancing(true);
     try {
       const defaults = getDefaultAdvanceDetails(activeOrder, nextShipmentStatus);
       const chosenAgent =
         nextShipmentStatus === 'preparing' && selectedAgentId
-          ? deliveryAgents.find((a) => a.id === selectedAgentId)
+          ? ownDeliveryAgents.find((a) => a.id === selectedAgentId)
           : undefined;
 
       const assignedCourier: AssignedCourier | undefined = chosenAgent
@@ -358,7 +370,7 @@ export function ShipmentTrackingView({
   }
 
   async function handleRevertPreviousStage() {
-    if (!activeOrder || !previousShipmentStatus || !isAdmin || advancing || reverting) return;
+    if (!activeOrder || !previousShipmentStatus || !canManageActiveOrderShipment || advancing || reverting) return;
     setAdvanceError('');
     setReverting(true);
     try {
@@ -416,7 +428,7 @@ export function ShipmentTrackingView({
               className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-zinc-900 bg-white hover:bg-zinc-50 border border-zinc-300 hover:border-zinc-950 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
             >
               <Settings2 className="w-4 h-4 text-blue-700" />
-              <span>Medios de envío ({deliveryAgents.length})</span>
+              <span>Mis medios de envío ({ownDeliveryAgents.length})</span>
             </button>
           )}
           <form onSubmit={handleCodeLookup} className="flex flex-col sm:flex-row gap-2.5 flex-1">
@@ -734,7 +746,7 @@ export function ShipmentTrackingView({
                     <h3 className="text-sm font-semibold text-zinc-950">
                       Historial de movimientos
                     </h3>
-                    {isAdmin && (nextStageMeta || previousStageMeta) && (
+                    {canManageActiveOrderShipment && (nextStageMeta || previousStageMeta) && (
                       <p className="text-xs text-zinc-500 mt-0.5">
                         {nextStageMeta ? (
                           <>
@@ -748,7 +760,7 @@ export function ShipmentTrackingView({
                     )}
                   </div>
 
-                  {isAdmin && (previousShipmentStatus || nextShipmentStatus) && (
+                  {canManageActiveOrderShipment && (previousShipmentStatus || nextShipmentStatus) && (
                     <div className="flex flex-wrap items-center gap-2">
                       {previousShipmentStatus && previousStageMeta && (
                         <button
@@ -790,7 +802,7 @@ export function ShipmentTrackingView({
                 </div>
 
                 {/* Courier assignment selector when advancing to Preparado (preparing) */}
-                {isAdmin && nextShipmentStatus === 'preparing' && (
+                {canManageActiveOrderShipment && nextShipmentStatus === 'preparing' && (
                   <div className="mb-4 p-4 rounded-xl bg-blue-50/60 border border-blue-200 space-y-2.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <label
@@ -805,7 +817,7 @@ export function ShipmentTrackingView({
                         className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:underline cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5" />
-                        <span>Cargar / gestionar medios</span>
+                        <span>Cargar / gestionar mis medios</span>
                       </button>
                     </div>
 
@@ -827,15 +839,15 @@ export function ShipmentTrackingView({
 
                     {availableAgents.length === 0 && (
                       <p className="text-[11px] text-zinc-600">
-                        Todavía no hay medios de envío disponibles cargados. Usá{' '}
-                        <strong>Cargar / gestionar medios</strong> para registrar moto, auto o
-                        utilitario.
+                        Todavía no tenés medios de envío propios disponibles cargados. Usá{' '}
+                        <strong>Cargar / gestionar mis medios</strong> para registrar tu moto, auto
+                        o utilitario.
                       </p>
                     )}
                   </div>
                 )}
 
-                {isAdmin && nextShipmentStatus && nextStageMeta && showCustomAdvance && (
+                {canManageActiveOrderShipment && nextShipmentStatus && nextStageMeta && showCustomAdvance && (
                   <div className="mb-5 p-4 rounded-xl bg-zinc-50 border border-zinc-200 space-y-3">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
@@ -1343,7 +1355,7 @@ export function ShipmentTrackingView({
         <DeliveryAgentsManagerModal
           open={agentsModalOpen}
           user={user}
-          agents={deliveryAgents}
+          agents={ownDeliveryAgents}
           onClose={() => setAgentsModalOpen(false)}
           onNotifyToast={onNotifyToast}
         />

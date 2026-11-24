@@ -783,13 +783,17 @@ function AppContent() {
     return () => unsubscribe();
   }, [dbMode, cloudAuthReady, cloudIsAdmin]);
 
-  // 4e. Real-time Delivery Agents (Medios de Envío) Listener (Per-client ownership)
+  // 4e. Real-time Delivery Agents (Medios de Envío) Listener (Strict Per-Client Ownership)
   useEffect(() => {
     if (dbMode !== 'cloud' || !cloudAuthReady || !cloudUser) {
       setCloudDeliveryAgents([]);
       return;
     }
-    const agentsQuery = cloudIsAdmin
+    const isBootstrappedAdminAccount =
+      cloudIsAdmin &&
+      Boolean(cloudUser.emailVerified) &&
+      cloudUser.email?.toLowerCase() === 'informaticaurquiza@gmail.com';
+    const agentsQuery = isBootstrappedAdminAccount
       ? query(collection(db, 'deliveryAgents'))
       : query(collection(db, 'deliveryAgents'), where('ownerId', '==', cloudUser.uid));
 
@@ -801,7 +805,11 @@ function AppContent() {
             id: d.id,
             ...(d.data() as Omit<DeliveryAgent, 'id'>),
           }))
-          .filter((a) => (cloudIsAdmin ? !a.ownerId || a.ownerId === cloudUser.uid : a.ownerId === cloudUser.uid))
+          .filter((a) =>
+            isBootstrappedAdminAccount
+              ? a.ownerId === cloudUser.uid || !a.ownerId
+              : a.ownerId === cloudUser.uid,
+          )
           .sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt));
         setCloudDeliveryAgents(list);
       },
@@ -940,8 +948,13 @@ function AppContent() {
   const activeProductsLoading = dbMode === 'local' ? localProductsLoading : cloudProductsLoading;
   const activeOrders = dbMode === 'local' ? localOrders : cloudOrders;
   const activeAccounts = dbMode === 'local' ? localAccounts : cloudAccounts;
-  const activeDeliveryAgents =
-    dbMode === 'local' ? localDeliveryAgents : cloudDeliveryAgents;
+  const activeDeliveryAgents = useMemo(() => {
+    if (!activeUser) return [];
+    const source = dbMode === 'local' ? localDeliveryAgents : cloudDeliveryAgents;
+    return source.filter(
+      (agent) => agent.ownerId === activeUser.uid || (activeIsAdmin && !agent.ownerId),
+    );
+  }, [activeUser, activeIsAdmin, dbMode, localDeliveryAgents, cloudDeliveryAgents]);
   const activeBenefits = dbMode === 'local' ? localBenefits : cloudAllBenefits;
   const activeSubscriptionPayments =
     dbMode === 'local' ? localSubscriptionPayments : cloudSubscriptionPayments;

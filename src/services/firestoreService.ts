@@ -778,9 +778,13 @@ export async function createOrUpdateDeliveryAgent(input: {
   const ownerUid =
     auth.currentUser?.uid && ID_PATTERN.test(auth.currentUser.uid)
       ? clampString(auth.currentUser.uid, 128)
-      : undefined;
+      : '';
+  if (!ownerUid) {
+    throw new Error('Iniciá sesión para cargar o modificar tus medios de envío.');
+  }
 
   const commonFields = {
+    ownerId: ownerUid,
     vehicleType: input.vehicleType,
     licensePlate,
     fullName,
@@ -794,13 +798,12 @@ export async function createOrUpdateDeliveryAgent(input: {
     } else {
       await setDoc(ref, {
         ...commonFields,
-        ...(ownerUid ? { ownerId: ownerUid } : {}),
         createdAt: serverTimestamp(),
       });
     }
     return {
       id: agentId,
-      ...(ownerUid && !input.id ? { ownerId: ownerUid } : {}),
+      ownerId: ownerUid,
       vehicleType: input.vehicleType,
       licensePlate,
       fullName,
