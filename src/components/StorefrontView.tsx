@@ -15,7 +15,7 @@ import {
   Tag,
   X,
 } from 'lucide-react';
-import { ASSET_IMAGES } from '../lib/categoryAssets';
+import { HERO_BANNER_SLIDES, type HeroBannerSlide } from '../lib/categoryAssets';
 import { getProductGallery } from '../lib/imageTools';
 import type { PushPermissionState } from '../lib/pushNotifications';
 import {
@@ -56,6 +56,15 @@ interface StorefrontViewProps {
 }
 
 type SortOption = 'featured' | 'price_asc' | 'price_desc' | 'bestselling';
+
+function shuffleBannerSlides(slides: HeroBannerSlide[]): HeroBannerSlide[] {
+  const copy = [...slides];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
 
 export function StorefrontView({
   products,
@@ -106,7 +115,19 @@ export function StorefrontView({
   const [detailImageIndex, setDetailImageIndex] = useState(0);
   const [cardQuantities, setCardQuantities] = useState<Record<string, string>>({});
   const [recentlyAdded, setRecentlyAdded] = useState<{ id: string; qty: number } | null>(null);
+  const [heroBannerSlides] = useState<HeroBannerSlide[]>(() =>
+    shuffleBannerSlides(HERO_BANNER_SLIDES),
+  );
+  const [heroSlideIndex, setHeroSlideIndex] = useState(0);
   const handledSharedProductRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (heroBannerSlides.length <= 1) return;
+    const timer = window.setInterval(() => {
+      setHeroSlideIndex((prev) => (prev + 1) % heroBannerSlides.length);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [heroBannerSlides.length]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || products.length === 0) return;
@@ -350,12 +371,76 @@ export function StorefrontView({
           </div>
 
           <div className="lg:col-span-7">
-            <div className="relative h-72 sm:h-96 lg:h-full min-h-[340px] rounded-xl overflow-hidden bg-zinc-100 border border-zinc-200">
-              <ProductImage
-                src={ASSET_IMAGES.hero}
-                alt="Selección destacada de productos de Infourqui Mercado"
-                className="w-full h-full object-cover"
-              />
+            <div className="group relative h-72 sm:h-96 lg:h-full min-h-[340px] rounded-xl overflow-hidden bg-zinc-100 border border-zinc-200">
+              {heroBannerSlides.map((slide, idx) => {
+                const isActive = idx === heroSlideIndex;
+                return (
+                  <div
+                    key={slide.id}
+                    aria-hidden={!isActive}
+                    className={`absolute inset-0 transition-opacity duration-500 ease-out ${
+                      isActive ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
+                    }`}
+                  >
+                    <ProductImage
+                      src={slide.src}
+                      alt={slide.alt}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                );
+              })}
+
+              {/* Subtle Previous / Next Arrows on Hover */}
+              <button
+                type="button"
+                onClick={() =>
+                  setHeroSlideIndex(
+                    (prev) => (prev - 1 + heroBannerSlides.length) % heroBannerSlides.length,
+                  )
+                }
+                aria-label="Imagen anterior del banner"
+                className="absolute left-3 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-zinc-950/55 hover:bg-zinc-950/80 text-white inline-flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setHeroSlideIndex((prev) => (prev + 1) % heroBannerSlides.length)
+                }
+                aria-label="Siguiente imagen del banner"
+                className="absolute right-3 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-zinc-950/55 hover:bg-zinc-950/80 text-white inline-flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+
+              {/* Bottom Caption & 10-Slide Progress Indicators */}
+              <div className="absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-zinc-950/70 via-zinc-950/25 to-transparent px-4 pt-8 pb-3 flex items-end justify-between gap-3">
+                <span className="text-xs font-medium text-white/95 truncate">
+                  {heroBannerSlides[heroSlideIndex]?.caption}
+                </span>
+                <div className="flex items-center gap-1.5 shrink-0" role="tablist" aria-label="Imágenes del banner">
+                  {heroBannerSlides.map((slide, idx) => {
+                    const isActive = idx === heroSlideIndex;
+                    return (
+                      <button
+                        key={slide.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={isActive}
+                        aria-label={`Ver imagen ${idx + 1} de ${heroBannerSlides.length}: ${slide.caption}`}
+                        onClick={() => setHeroSlideIndex(idx)}
+                        className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                          isActive
+                            ? 'w-5 bg-white'
+                            : 'w-1.5 bg-white/45 hover:bg-white/80'
+                        }`}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           </div>
         </div>
