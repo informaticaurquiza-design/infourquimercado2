@@ -31,3 +31,21 @@
     scroll-behavior: auto !important;
   }
 }
+
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  body.printing-shipping-ticket {
+    background: #ffffff !important;
+  }
+
+  body.printing-shipping-ticket #root {
+    display: none !important;
+  }
+
+  body.printing-shipping-ticket #shipping-ticket-print-root {
+    display: block !important;
+  }
+}

@@ -8,6 +8,7 @@ import {
   MapPin,
   Package,
   Plus,
+  Printer,
   Search,
   Settings2,
   Truck,
@@ -41,6 +42,11 @@ import {
   VehicleTypeIcon,
 } from './DeliveryAgentsManagerModal';
 import { ProductImage } from './ProductImage';
+import {
+  ShippingTicketModal,
+  getPaymentMethodLabel,
+  getPaymentStatusLabel,
+} from './ShippingTicketModal';
 
 function getDefaultAdvanceDetails(
   order: Order,
@@ -135,6 +141,7 @@ export function ShipmentTrackingView({
   const [searching, setSearching] = useState(false);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [receiptLightboxOpen, setReceiptLightboxOpen] = useState(false);
+  const [shippingTicketOpen, setShippingTicketOpen] = useState(false);
   const [agentsModalOpen, setAgentsModalOpen] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [advancing, setAdvancing] = useState(false);
@@ -550,17 +557,25 @@ export function ShipmentTrackingView({
                   </p>
                 </div>
 
-                <div className="sm:text-right">
+                <div className="sm:text-right flex flex-col sm:items-end gap-1">
                   <p className="text-xs text-zinc-500">Código de seguimiento</p>
                   <p className="font-mono text-base font-bold text-zinc-950">
                     {activeOrder.trackingCode}
                   </p>
-                  <p className="text-xs text-zinc-600 mt-1">
+                  <p className="text-xs text-zinc-600">
                     Entrega estimada:{' '}
                     <span className="font-medium text-zinc-950">
                       {activeOrder.estimatedDelivery}
                     </span>
                   </p>
+                  <button
+                    type="button"
+                    onClick={() => setShippingTicketOpen(true)}
+                    className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-zinc-900 bg-zinc-100 hover:bg-zinc-950 hover:text-white border border-zinc-300 hover:border-zinc-950 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    Imprimir ticket de envío
+                  </button>
                 </div>
               </div>
 
@@ -809,23 +824,165 @@ export function ShipmentTrackingView({
                 )}
 
                 <ol className="space-y-4 border-l border-zinc-200 ml-2.5 pl-6">
-                  {[...activeOrder.trackingEvents].reverse().map((ev, idx) => (
-                    <li key={`${ev.timestampIso}-${idx}`} className="relative">
-                      <span
-                        className={`w-2.5 h-2.5 rounded-full absolute -left-[29px] top-1.5 ${
-                          idx === 0 ? 'bg-blue-700' : 'bg-zinc-300'
-                        }`}
-                      />
-                      <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1">
-                        <p className="text-sm font-semibold text-zinc-950">{ev.label}</p>
-                        <span className="font-mono text-xs text-zinc-500 tabular-nums">
-                          {formatDateTime(ev.timestampIso)}
-                        </span>
-                      </div>
-                      <p className="text-xs text-zinc-600 mt-0.5">{ev.note}</p>
-                      <p className="text-xs text-zinc-400 mt-0.5">{ev.location}</p>
-                    </li>
-                  ))}
+                  {[...activeOrder.trackingEvents].reverse().map((ev, idx) => {
+                    const isConfirmedTransfer =
+                      ev.status === 'confirmed' && activeOrder.paymentMethod === 'transfer';
+                    const receipt = activeOrder.paymentReceipt;
+
+                    return (
+                      <li key={`${ev.timestampIso}-${idx}`} className="relative">
+                        <span
+                          className={`w-2.5 h-2.5 rounded-full absolute -left-[29px] top-1.5 ${
+                            idx === 0 ? 'bg-blue-700' : 'bg-zinc-300'
+                          }`}
+                        />
+                        <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1">
+                          <p className="text-sm font-semibold text-zinc-950">{ev.label}</p>
+                          <span className="font-mono text-xs text-zinc-500 tabular-nums">
+                            {formatDateTime(ev.timestampIso)}
+                          </span>
+                        </div>
+                        <p className="text-xs text-zinc-600 mt-0.5">{ev.note}</p>
+                        <p className="text-xs text-zinc-400 mt-0.5">{ev.location}</p>
+
+                        {isConfirmedTransfer && (
+                          <div className="mt-3 p-3.5 rounded-xl bg-emerald-50/50 border border-emerald-200/90 space-y-2.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-950">
+                                <FileCheck2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                                <span>Datos del pago por transferencia</span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                {receipt && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setReceiptLightboxOpen(true)}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-emerald-900 bg-white hover:bg-emerald-700 hover:text-white border border-emerald-300 rounded-md transition-colors cursor-pointer"
+                                  >
+                                    <FileCheck2 className="w-3 h-3" />
+                                    Ver ticket de pago
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => setShippingTicketOpen(true)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-zinc-800 bg-white hover:bg-zinc-950 hover:text-white border border-zinc-300 rounded-md transition-colors cursor-pointer"
+                                >
+                                  <Printer className="w-3 h-3" />
+                                  Ticket de envío
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col sm:flex-row gap-3">
+                              {receipt && (
+                                <button
+                                  type="button"
+                                  onClick={() => setReceiptLightboxOpen(true)}
+                                  aria-label="Ver ticket de pago ampliado"
+                                  className="w-20 h-24 rounded-lg overflow-hidden bg-white border border-emerald-200 hover:border-blue-700 transition-colors shrink-0 cursor-pointer"
+                                >
+                                  <img
+                                    src={receipt.imageUrl}
+                                    alt={`Ticket de pago ${activeOrder.orderNumber}`}
+                                    className="w-full h-full object-cover"
+                                  />
+                                </button>
+                              )}
+
+                              <div className="min-w-0 flex-1 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                                <div>
+                                  <p className="text-[11px] text-zinc-500">Medio / Estado</p>
+                                  <p className="font-medium text-zinc-950">
+                                    {getPaymentMethodLabel(activeOrder)} ·{' '}
+                                    {getPaymentStatusLabel(activeOrder.paymentStatus)}
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-[11px] text-zinc-500">
+                                    Importe / ID transacción
+                                  </p>
+                                  <p className="font-mono font-semibold text-zinc-950">
+                                    {formatCurrency(activeOrder.total)} ·{' '}
+                                    <span className="font-normal text-zinc-600">
+                                      {activeOrder.transactionId}
+                                    </span>
+                                  </p>
+                                </div>
+
+                                {receipt ? (
+                                  <>
+                                    {receipt.bankName && (
+                                      <div>
+                                        <p className="text-[11px] text-zinc-500">
+                                          Banco / Billetera
+                                        </p>
+                                        <p className="font-medium text-zinc-950">
+                                          {receipt.bankName}
+                                        </p>
+                                      </div>
+                                    )}
+                                    {receipt.operationNumber && (
+                                      <div>
+                                        <p className="text-[11px] text-zinc-500">
+                                          N.º de operación
+                                        </p>
+                                        <p className="font-mono font-semibold text-zinc-950">
+                                          {receipt.operationNumber}
+                                        </p>
+                                      </div>
+                                    )}
+                                    {receipt.payerName && (
+                                      <div>
+                                        <p className="text-[11px] text-zinc-500">
+                                          Titular / Pagador
+                                        </p>
+                                        <p className="font-medium text-zinc-950">
+                                          {receipt.payerName}
+                                        </p>
+                                      </div>
+                                    )}
+                                    {receipt.transferDate && (
+                                      <div>
+                                        <p className="text-[11px] text-zinc-500">
+                                          Fecha de transferencia
+                                        </p>
+                                        <p className="font-medium text-zinc-950">
+                                          {receipt.transferDate}
+                                        </p>
+                                      </div>
+                                    )}
+                                    {receipt.destinationAccount && (
+                                      <div>
+                                        <p className="text-[11px] text-zinc-500">Cuenta destino</p>
+                                        <p className="font-medium text-zinc-950 truncate">
+                                          {receipt.destinationAccount}
+                                        </p>
+                                      </div>
+                                    )}
+                                    {receipt.amountDetected && (
+                                      <div>
+                                        <p className="text-[11px] text-zinc-500">
+                                          Monto del comprobante
+                                        </p>
+                                        <p className="font-mono font-semibold text-zinc-950">
+                                          {receipt.amountDetected}
+                                        </p>
+                                      </div>
+                                    )}
+                                  </>
+                                ) : (
+                                  <div className="sm:col-span-2 text-[11px] text-zinc-600">
+                                    Transferencia registrada sin imagen de ticket adjunta.
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ol>
               </div>
 
@@ -1018,7 +1175,7 @@ export function ShipmentTrackingView({
         </div>
       )}
 
-      {/* Lightbox Modal for Transfer Receipt */}
+      {/* Lightbox Modal for Transfer Receipt / Ticket de Pago */}
       {receiptLightboxOpen && activeOrder?.paymentReceipt && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
@@ -1028,27 +1185,84 @@ export function ShipmentTrackingView({
           <div className="relative z-10 w-full max-w-2xl bg-white border border-zinc-200 rounded-xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between px-5 py-3.5 border-b border-zinc-200">
               <h3 className="font-display text-sm font-bold text-zinc-950">
-                Comprobante — Pedido {activeOrder.orderNumber}
+                Ticket de pago — Pedido {activeOrder.orderNumber}
               </h3>
               <button
                 type="button"
                 onClick={() => setReceiptLightboxOpen(false)}
-                aria-label="Cerrar comprobante"
+                aria-label="Cerrar ticket de pago"
                 className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="p-5 overflow-y-auto bg-zinc-50 flex justify-center">
-              <img
-                src={activeOrder.paymentReceipt.imageUrl}
-                alt={`Comprobante de transferencia ${activeOrder.orderNumber}`}
-                className="max-h-[72vh] w-auto object-contain rounded-lg border border-zinc-200 bg-white"
-              />
+            <div className="p-5 overflow-y-auto bg-zinc-50 space-y-4">
+              <div className="flex justify-center">
+                <img
+                  src={activeOrder.paymentReceipt.imageUrl}
+                  alt={`Ticket de pago por transferencia ${activeOrder.orderNumber}`}
+                  className="max-h-[58vh] w-auto object-contain rounded-lg border border-zinc-200 bg-white"
+                />
+              </div>
+              <div className="p-4 rounded-xl bg-white border border-zinc-200 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                {activeOrder.paymentReceipt.bankName && (
+                  <div>
+                    <p className="text-[11px] text-zinc-500">Banco / Billetera</p>
+                    <p className="font-medium text-zinc-950">
+                      {activeOrder.paymentReceipt.bankName}
+                    </p>
+                  </div>
+                )}
+                {activeOrder.paymentReceipt.operationNumber && (
+                  <div>
+                    <p className="text-[11px] text-zinc-500">N.º de operación</p>
+                    <p className="font-mono font-semibold text-zinc-950">
+                      {activeOrder.paymentReceipt.operationNumber}
+                    </p>
+                  </div>
+                )}
+                {activeOrder.paymentReceipt.payerName && (
+                  <div>
+                    <p className="text-[11px] text-zinc-500">Titular / Pagador</p>
+                    <p className="font-medium text-zinc-950">
+                      {activeOrder.paymentReceipt.payerName}
+                    </p>
+                  </div>
+                )}
+                {activeOrder.paymentReceipt.transferDate && (
+                  <div>
+                    <p className="text-[11px] text-zinc-500">Fecha de transferencia</p>
+                    <p className="font-medium text-zinc-950">
+                      {activeOrder.paymentReceipt.transferDate}
+                    </p>
+                  </div>
+                )}
+                {activeOrder.paymentReceipt.destinationAccount && (
+                  <div>
+                    <p className="text-[11px] text-zinc-500">Cuenta destino</p>
+                    <p className="font-medium text-zinc-950 break-all">
+                      {activeOrder.paymentReceipt.destinationAccount}
+                    </p>
+                  </div>
+                )}
+                {activeOrder.paymentReceipt.amountDetected && (
+                  <div>
+                    <p className="text-[11px] text-zinc-500">Monto leído</p>
+                    <p className="font-mono font-semibold text-zinc-950">
+                      {activeOrder.paymentReceipt.amountDetected}
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
       )}
+
+      <ShippingTicketModal
+        order={shippingTicketOpen ? activeOrder : null}
+        onClose={() => setShippingTicketOpen(false)}
+      />
 
       {isAdmin && (
         <DeliveryAgentsManagerModal
