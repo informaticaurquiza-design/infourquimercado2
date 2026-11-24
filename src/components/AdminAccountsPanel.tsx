@@ -1,10 +1,13 @@
 import { useMemo, useState } from 'react';
 import {
   Banknote,
+  Check,
   CheckCircle2,
   Clock,
+  Copy,
   FileCheck2,
   Info,
+  KeyRound,
   Landmark,
   Power,
   Search,
@@ -26,7 +29,10 @@ import {
   adminRejectSubscriptionPayment,
   adminSetAccountStatus,
 } from '../services/dataService';
-import { localAdminCreateCustomer } from '../services/localApiService';
+import {
+  localAdminCreateCustomer,
+  localAdminGenerateRecoveryCode,
+} from '../services/localApiService';
 import type {
   AppUser,
   DatabaseMode,
@@ -74,6 +80,15 @@ export function AdminAccountsPanel({
   const [clientBankHolder, setClientBankHolder] = useState('');
   const [creatingClient, setCreatingClient] = useState(false);
   const [createClientError, setCreateClientError] = useState('');
+
+  // Local password recovery code banner state
+  const [recoveryResult, setRecoveryResult] = useState<{
+    email: string;
+    name: string;
+    code: string;
+    expiresInMinutes: number;
+  } | null>(null);
+  const [copiedRecoveryCode, setCopiedRecoveryCode] = useState(false);
 
   const enrichedAccounts = useMemo(() => {
     return accounts
@@ -225,6 +240,27 @@ export function AdminAccountsPanel({
     }
   }
 
+  async function handleGenerateRecoveryCode(targetUser: UserProfile) {
+    setBusyUid(targetUser.uid);
+    try {
+      const res = await localAdminGenerateRecoveryCode(targetUser.uid);
+      setRecoveryResult({
+        email: res.email,
+        name: targetUser.displayName || res.email,
+        code: res.code,
+        expiresInMinutes: res.expiresInMinutes,
+      });
+      setCopiedRecoveryCode(false);
+      onNotifyToast(`Código de recuperación generado para ${res.email} (válido ${res.expiresInMinutes} min).`);
+    } catch (err) {
+      onNotifyToast(
+        err instanceof Error ? err.message : 'No pudimos generar el código de recuperación.',
+      );
+    } finally {
+      setBusyUid(null);
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* KPI Strip */}
@@ -331,6 +367,48 @@ export function AdminAccountsPanel({
             </button>
           )}
         </div>
+
+        {recoveryResult && (
+          <div className="mx-6 mt-4 p-4 rounded-xl bg-blue-50 border border-blue-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-blue-950">
+            <div className="space-y-1">
+              <p className="font-semibold flex items-center gap-1.5">
+                <KeyRound className="w-4 h-4 text-blue-700 shrink-0" />
+                Código de recuperación para {recoveryResult.name} ({recoveryResult.email})
+              </p>
+              <p className="text-blue-900">
+                Compartí este código de un solo uso (válido por {recoveryResult.expiresInMinutes}{' '}
+                minutos) para que el cliente restablezca su contraseña desde{' '}
+                <span className="font-semibold">Ingresar → ¿Olvidaste tu contraseña?</span>:
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <code className="px-3 py-1.5 bg-white border border-blue-300 rounded-lg font-mono text-sm font-bold tracking-wider text-zinc-950">
+                {recoveryResult.code}
+              </code>
+              <button
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(recoveryResult.code);
+                  setCopiedRecoveryCode(true);
+                  onNotifyToast('Código copiado al portapapeles.');
+                  window.setTimeout(() => setCopiedRecoveryCode(false), 2000);
+                }}
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-zinc-950 hover:bg-blue-700 rounded-lg transition-colors cursor-pointer"
+              >
+                {copiedRecoveryCode ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                {copiedRecoveryCode ? 'Copiado' : 'Copiar'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecoveryResult(null)}
+                aria-label="Cerrar código de recuperación"
+                className="p-1.5 text-blue-700 hover:bg-blue-100 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {filteredAccounts.length === 0 ? (
           <div className="p-12 text-center text-sm text-zinc-500">
@@ -481,6 +559,19 @@ export function AdminAccountsPanel({
                               >
                                 <UserX className="w-3.5 h-3.5" />
                                 Desactivar
+                              </button>
+                            )}
+
+                            {dbMode === 'local' && (
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => void handleGenerateRecoveryCode(account)}
+                                title="Generar código de recuperación de contraseña (15 min)"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-zinc-800 bg-white border border-zinc-300 hover:border-zinc-950 disabled:opacity-60 rounded-lg transition-colors cursor-pointer"
+                              >
+                                <KeyRound className="w-3.5 h-3.5" />
+                                Clave
                               </button>
                             )}
                           </div>

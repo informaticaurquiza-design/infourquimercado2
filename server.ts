@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express, { type Request, type Response } from 'express';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -670,6 +671,186 @@ app.post('/api/local/auth/change-password', async (req, res) => {
     res.json({ ok: true, token: freshToken });
   } catch {
     res.status(500).json({ error: 'No pudimos actualizar la contraseña.' });
+  }
+});
+
+// --- Local Password Recovery (15-min single-use hashed code, rate-limited) ---
+
+interface LocalResetEntry {
+  uid: string;
+  email: string;
+  codeHash: string;
+  expiresAt: number;
+  attempts: number;
+}
+
+const PASSWORD_RESET_TTL_MS = 15 * 60 * 1000;
+const PASSWORD_RESET_MAX_ATTEMPTS = 5;
+const localPasswordResetTokens = new Map<string, LocalResetEntry>();
+const resetRateLimiter = new Map<string, { count: number; resetAt: number }>();
+
+function checkResetRateLimit(key: string, maxPerWindow: number): boolean {
+  const now = Date.now();
+  const current = resetRateLimiter.get(key);
+  if (!current || current.resetAt <= now) {
+    resetRateLimiter.set(key, { count: 1, resetAt: now + PASSWORD_RESET_TTL_MS });
+    return true;
+  }
+  if (current.count >= maxPerWindow) {
+    return false;
+  }
+  current.count += 1;
+  return true;
+}
+
+function normalizeResetCode(raw: string): string {
+  return raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+function hashResetCode(normalizedCode: string): string {
+  return crypto.createHash('sha256').update(normalizedCode).digest('hex');
+}
+
+function generateLocalRecoveryCode(uid: string, email: string): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.randomBytes(8);
+  let raw = '';
+  for (let i = 0; i < 8; i += 1) {
+    raw += alphabet[bytes[i] % alphabet.length];
+  }
+  const formatted = `${raw.slice(0, 4)}-${raw.slice(4, 8)}`;
+  const normalizedEmail = email.trim().toLowerCase();
+  localPasswordResetTokens.set(normalizedEmail, {
+    uid,
+    email: normalizedEmail,
+    codeHash: hashResetCode(raw),
+    expiresAt: Date.now() + PASSWORD_RESET_TTL_MS,
+    attempts: 0,
+  });
+  return formatted;
+}
+
+app.post('/api/local/auth/request-password-reset', (req, res) => {
+  const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+  if (!checkResetRateLimit(`req:${clientIp}`, 5)) {
+    res.status(429).json({
+      error: 'Realizaste demasiadas solicitudes. Esperá unos minutos e intentá nuevamente.',
+    });
+    return;
+  }
+
+  const email = clampString(String(req.body?.email || ''), 120).toLowerCase();
+  if (!email || !email.includes('@')) {
+    res.status(400).json({ error: 'Ingresá un correo electrónico válido.' });
+    return;
+  }
+
+  const db = loadLocalDb();
+  const target = db.users.find((u) => u.email.toLowerCase() === email);
+  const envPass = process.env.LOCAL_ADMIN_PASSWORD?.trim() || '';
+
+  if (target && !(target.role === 'admin' && envPass)) {
+    const code = generateLocalRecoveryCode(target.uid, target.email);
+    console.log(
+      `\n[Infourqui Mercado] Código de recuperación de contraseña (válido 15 min) para ${target.email}: ${code}\n`,
+    );
+  }
+
+  // Always return a neutral response (no account enumeration, never expose code in HTTP body)
+  res.json({
+    ok: true,
+    message:
+      'Si la cuenta existe en el servidor local, se generó un código de recuperación válido por 15 minutos en la consola de la PC o podés solicitarlo al administrador.',
+  });
+});
+
+app.post('/api/local/auth/confirm-password-reset', async (req, res) => {
+  const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+  if (!checkResetRateLimit(`confirm:${clientIp}`, 10)) {
+    res.status(429).json({
+      error: 'Demasiados intentos de recuperación. Esperá unos minutos e intentá nuevamente.',
+    });
+    return;
+  }
+
+  try {
+    const email = clampString(String(req.body?.email || ''), 120).toLowerCase();
+    const rawCode = typeof req.body?.code === 'string' ? req.body.code : '';
+    const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+
+    if (!email || !email.includes('@')) {
+      res.status(400).json({ error: 'Ingresá un correo electrónico válido.' });
+      return;
+    }
+    const normalizedCode = normalizeResetCode(rawCode);
+    if (normalizedCode.length !== 8) {
+      res.status(400).json({ error: 'Ingresá el código de recuperación de 8 caracteres.' });
+      return;
+    }
+    if (newPassword.length < 8 || newPassword.length > 128) {
+      res.status(400).json({ error: 'La nueva contraseña debe tener entre 8 y 128 caracteres.' });
+      return;
+    }
+
+    const entry = localPasswordResetTokens.get(email);
+    if (!entry || entry.expiresAt <= Date.now()) {
+      localPasswordResetTokens.delete(email);
+      res.status(400).json({
+        error: 'El código de recuperación es inválido o venció. Solicitá uno nuevo.',
+      });
+      return;
+    }
+
+    const incomingHashBuf = Buffer.from(hashResetCode(normalizedCode), 'hex');
+    const storedHashBuf = Buffer.from(entry.codeHash, 'hex');
+    const validCode =
+      incomingHashBuf.length === storedHashBuf.length &&
+      crypto.timingSafeEqual(incomingHashBuf, storedHashBuf);
+
+    if (!validCode) {
+      entry.attempts += 1;
+      if (entry.attempts >= PASSWORD_RESET_MAX_ATTEMPTS) {
+        localPasswordResetTokens.delete(email);
+        res.status(400).json({
+          error: 'El código fue invalidado por demasiados intentos fallidos. Solicitá uno nuevo.',
+        });
+        return;
+      }
+      res.status(400).json({ error: 'Código de recuperación incorrecto.' });
+      return;
+    }
+
+    // Consume token immediately (single-use)
+    localPasswordResetTokens.delete(email);
+
+    const envPass = process.env.LOCAL_ADMIN_PASSWORD?.trim() || '';
+    const result = await withDbWriteLock((state) => {
+      const target = state.users.find(
+        (u) => u.uid === entry.uid && u.email.toLowerCase() === email,
+      );
+      if (!target) {
+        return { error: 'Cuenta no encontrada.', status: 404 as const };
+      }
+      if (target.role === 'admin' && envPass) {
+        return {
+          error:
+            'La contraseña del administrador local está definida por LOCAL_ADMIN_PASSWORD y debe cambiarse en esa variable de entorno.',
+          status: 400 as const,
+        };
+      }
+      target.passwordHash = hashPassword(newPassword);
+      target.updatedAt = new Date().toISOString();
+      return { status: 200 as const };
+    });
+
+    if ('error' in result) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: 'No pudimos restablecer la contraseña.' });
   }
 });
 
@@ -1799,6 +1980,36 @@ app.post('/api/local/admin/accounts', async (req, res) => {
     }
     res.status(500).json({ error: 'No pudimos crear la cuenta del cliente.' });
   }
+});
+
+app.post('/api/local/admin/accounts/:uid/recovery-code', (req, res) => {
+  const session = requireAdmin(req, res);
+  if (!session) return;
+
+  const targetUid = String(req.params.uid || '').trim();
+  const db = loadLocalDb();
+  const target = db.users.find((u) => u.uid === targetUid);
+  if (!target) {
+    res.status(404).json({ error: 'Cuenta no encontrada.' });
+    return;
+  }
+
+  const envPass = process.env.LOCAL_ADMIN_PASSWORD?.trim() || '';
+  if (target.role === 'admin' && envPass) {
+    res.status(400).json({
+      error:
+        'La contraseña del administrador local está configurada mediante LOCAL_ADMIN_PASSWORD.',
+    });
+    return;
+  }
+
+  const code = generateLocalRecoveryCode(target.uid, target.email);
+  res.json({
+    ok: true,
+    code,
+    email: target.email,
+    expiresInMinutes: 15,
+  });
 });
 
 app.patch('/api/local/admin/accounts/:uid/status', async (req, res) => {

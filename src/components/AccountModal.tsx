@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  ArrowLeft,
   Bell,
   CalendarClock,
   Check,
@@ -11,6 +12,7 @@ import {
   KeyRound,
   Landmark,
   LogOut,
+  Mail,
   ShieldCheck,
   User as UserIcon,
   X,
@@ -85,6 +87,15 @@ interface AccountModalProps {
     bankAccountHolder?: string;
     password: string;
   }) => Promise<LocalAuthActionResult | void>;
+  onRequestPasswordReset: (input: {
+    email: string;
+    channel: 'local' | 'cloud';
+  }) => Promise<{ mode?: 'local' | 'cloud'; email?: string; emailPasswordDisabled?: boolean }>;
+  onConfirmLocalPasswordReset: (input: {
+    email: string;
+    code: string;
+    newPassword: string;
+  }) => Promise<void>;
   onProfileSaved?: (updates: Partial<UserProfile>) => void;
   onSignOut: () => Promise<void>;
   pushPermission: PushPermissionState;
@@ -129,6 +140,8 @@ export function AccountModal({
   onSetupLocalAdmin,
   onLoginLocal,
   onRegisterLocal,
+  onRequestPasswordReset,
+  onConfirmLocalPasswordReset,
   onProfileSaved,
   onSignOut,
   pushPermission,
@@ -152,8 +165,8 @@ export function AccountModal({
     !localServerInfo?.envAdminConfigured &&
     !localServerInfo?.adminClaimed;
 
-  // Unified Auth Navigation: Ingresar / Crear cuenta (+ Configurar Admin on first local run)
-  const [authTab, setAuthTab] = useState<'login' | 'register' | 'setup'>('login');
+  // Unified Auth Navigation: Ingresar / Crear cuenta / Recuperar (+ Configurar Admin on first local run)
+  const [authTab, setAuthTab] = useState<'login' | 'register' | 'setup' | 'recover'>('login');
   const [authMethod, setAuthMethod] = useState<'local' | 'google'>('local');
 
   // Shared login / signup fields
@@ -166,6 +179,14 @@ export function AccountModal({
   const [signupBankAlias, setSignupBankAlias] = useState('');
   const [signupBankHolder, setSignupBankHolder] = useState('');
   const [showBankSection, setShowBankSection] = useState(false);
+
+  // Password recovery state
+  const [recoverChannel, setRecoverChannel] = useState<'local' | 'cloud'>('cloud');
+  const [recoverStep, setRecoverStep] = useState<'request' | 'confirm_local' | 'sent_cloud'>('request');
+  const [recoverEmail, setRecoverEmail] = useState('');
+  const [recoverCode, setRecoverCode] = useState('');
+  const [recoverNewPassword, setRecoverNewPassword] = useState('');
+  const [recoverConfirmPassword, setRecoverConfirmPassword] = useState('');
 
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
@@ -214,6 +235,12 @@ export function AccountModal({
       setSignupBankAlias('');
       setSignupBankHolder('');
       setShowBankSection(false);
+      setRecoverChannel(localAvailable ? 'local' : 'cloud');
+      setRecoverStep('request');
+      setRecoverEmail('');
+      setRecoverCode('');
+      setRecoverNewPassword('');
+      setRecoverConfirmPassword('');
       setShowPasswordSection(false);
       setCurrentPassword('');
       setNewPassword('');
@@ -381,6 +408,93 @@ export function AccountModal({
       onClose();
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : 'No pudimos completar el acceso local.');
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  function openPasswordRecovery() {
+    setAuthError('');
+    setAuthNotice('');
+    setUnauthorizedDomain('');
+    setEmailPasswordDisabled(false);
+    setPendingVerificationEmail('');
+    setCanResendVerification(false);
+    setRecoverEmail(authEmail.trim());
+    setRecoverCode('');
+    setRecoverNewPassword('');
+    setRecoverConfirmPassword('');
+    setRecoverChannel(localAvailable && dbMode === 'local' ? 'local' : localAvailable ? 'local' : 'cloud');
+    setRecoverStep('request');
+    setAuthTab('recover');
+  }
+
+  async function handleRequestRecoverySubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setAuthError('');
+    setAuthNotice('');
+    setEmailPasswordDisabled(false);
+    setAuthLoading(true);
+    try {
+      const targetChannel: 'local' | 'cloud' = localAvailable ? recoverChannel : 'cloud';
+      const result = await onRequestPasswordReset({
+        email: recoverEmail,
+        channel: targetChannel,
+      });
+      if (result.emailPasswordDisabled) {
+        setEmailPasswordDisabled(true);
+        return;
+      }
+      if (result.mode === 'local') {
+        setRecoverStep('confirm_local');
+        setAuthNotice(
+          'Código de recuperación generado (válido por 15 minutos). Obtenelo en la consola del servidor PC o solicitalo al administrador desde Panel → Cuentas.',
+        );
+      } else {
+        setRecoverStep('sent_cloud');
+        onNotifyToast('Si la cuenta existe, enviamos el enlace de recuperación a tu correo.');
+      }
+    } catch (err) {
+      setAuthError(
+        err instanceof Error ? err.message : 'No pudimos iniciar la recuperación de contraseña.',
+      );
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  async function handleConfirmLocalRecoverySubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setAuthError('');
+    setAuthNotice('');
+    if (recoverNewPassword.length < 8) {
+      setAuthError('La nueva contraseña debe tener al menos 8 caracteres.');
+      return;
+    }
+    if (recoverNewPassword !== recoverConfirmPassword) {
+      setAuthError('Las nuevas contraseñas no coinciden.');
+      return;
+    }
+    setAuthLoading(true);
+    try {
+      await onConfirmLocalPasswordReset({
+        email: recoverEmail.trim(),
+        code: recoverCode.trim(),
+        newPassword: recoverNewPassword,
+      });
+      setAuthEmail(recoverEmail.trim());
+      setAuthPassword('');
+      setRecoverCode('');
+      setRecoverNewPassword('');
+      setRecoverConfirmPassword('');
+      setRecoverStep('request');
+      setAuthMethod('local');
+      setAuthTab('login');
+      setAuthNotice('Contraseña restablecida correctamente. Ya podés ingresar con tu nueva clave.');
+    } catch (err) {
+      setAuthError(
+        err instanceof Error ? err.message : 'No pudimos restablecer la contraseña local.',
+      );
     } finally {
       setAuthLoading(false);
     }
@@ -860,9 +974,18 @@ export function AccountModal({
                       </div>
 
                       <div>
-                        <label className="block text-xs font-medium text-zinc-700 mb-1">
-                          Contraseña
-                        </label>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <label className="block text-xs font-medium text-zinc-700">
+                            Contraseña
+                          </label>
+                          <button
+                            type="button"
+                            onClick={openPasswordRecovery}
+                            className="text-[11px] font-medium text-blue-700 hover:underline cursor-pointer"
+                          >
+                            ¿Olvidaste tu contraseña?
+                          </button>
+                        </div>
                         <input
                           type="password"
                           required
@@ -954,6 +1077,241 @@ export function AccountModal({
                     >
                       Crear cuenta de cliente
                     </button>
+                  </p>
+                </div>
+              )}
+
+              {/* TAB: RECUPERAR CONTRASEÑA */}
+              {authTab === 'recover' && (
+                <div className="space-y-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthTab('login');
+                      setAuthError('');
+                      setAuthNotice('');
+                      setEmailPasswordDisabled(false);
+                    }}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-600 hover:text-zinc-950 cursor-pointer"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    Volver a Ingresar
+                  </button>
+
+                  <div>
+                    <h3 className="font-display text-sm font-bold text-zinc-950">
+                      Recuperar contraseña
+                    </h3>
+                    <p className="text-xs text-zinc-600 mt-1 leading-relaxed">
+                      {localAvailable
+                        ? 'Elegí si querés restablecer tu cuenta local (PC / Red LAN) o tu cuenta en la nube.'
+                        : 'Ingresá tu correo electrónico y te enviaremos un enlace seguro para crear una nueva contraseña.'}
+                    </p>
+                  </div>
+
+                  {localAvailable && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRecoverChannel('local');
+                          setRecoverStep('request');
+                          setAuthError('');
+                          setAuthNotice('');
+                          setEmailPasswordDisabled(false);
+                        }}
+                        className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
+                          recoverChannel === 'local'
+                            ? 'border-zinc-950 bg-zinc-950 text-white'
+                            : 'border-zinc-300 bg-white text-zinc-700 hover:border-zinc-950'
+                        }`}
+                      >
+                        <KeyRound className="w-3.5 h-3.5 shrink-0" />
+                        <span>Cuenta local</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRecoverChannel('cloud');
+                          setRecoverStep('request');
+                          setAuthError('');
+                          setAuthNotice('');
+                          setEmailPasswordDisabled(false);
+                        }}
+                        className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
+                          recoverChannel === 'cloud'
+                            ? 'border-blue-700 bg-blue-50 text-blue-950'
+                            : 'border-zinc-300 bg-white text-zinc-700 hover:border-zinc-950'
+                        }`}
+                      >
+                        <Mail className="w-3.5 h-3.5 shrink-0" />
+                        <span>Correo en la nube</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {recoverStep === 'sent_cloud' ? (
+                    <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 space-y-2.5 text-xs text-emerald-950">
+                      <p className="font-semibold">Revisá tu casilla de correo</p>
+                      <p className="leading-relaxed">
+                        Si existe una cuenta registrada con{' '}
+                        <span className="font-semibold">{recoverEmail}</span>, te enviamos un enlace
+                        para restablecer tu contraseña. Revisá también la carpeta de correo no
+                        deseado (spam).
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAuthEmail(recoverEmail);
+                            setAuthMethod('local');
+                            setAuthTab('login');
+                            setRecoverStep('request');
+                            setAuthError('');
+                          }}
+                          className="px-3.5 py-2 text-xs font-semibold text-white bg-zinc-950 hover:bg-blue-700 rounded-lg transition-colors cursor-pointer"
+                        >
+                          Ir a Ingresar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRecoverStep('request')}
+                          className="px-3 py-2 text-xs font-medium text-emerald-900 bg-white border border-emerald-300 hover:border-emerald-600 rounded-lg transition-colors cursor-pointer"
+                        >
+                          Enviar nuevamente
+                        </button>
+                      </div>
+                    </div>
+                  ) : localAvailable && recoverChannel === 'local' && recoverStep === 'confirm_local' ? (
+                    <form onSubmit={handleConfirmLocalRecoverySubmit} className="space-y-3.5">
+                      <div>
+                        <label className="block text-xs font-medium text-zinc-700 mb-1">
+                          Correo electrónico de la cuenta
+                        </label>
+                        <input
+                          type="email"
+                          required
+                          maxLength={120}
+                          value={recoverEmail}
+                          onChange={(e) => setRecoverEmail(e.target.value)}
+                          placeholder="cliente@correo.com"
+                          className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-zinc-700 mb-1">
+                          Código de recuperación (8 caracteres)
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          maxLength={16}
+                          value={recoverCode}
+                          onChange={(e) => setRecoverCode(e.target.value.toUpperCase())}
+                          placeholder="Ej. ABCD-2345"
+                          className="w-full px-3 py-2 text-sm font-mono uppercase tracking-wider border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-zinc-700 mb-1">
+                          Nueva contraseña (mínimo 8 caracteres)
+                        </label>
+                        <input
+                          type="password"
+                          required
+                          minLength={8}
+                          maxLength={128}
+                          value={recoverNewPassword}
+                          onChange={(e) => setRecoverNewPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-zinc-700 mb-1">
+                          Confirmar nueva contraseña
+                        </label>
+                        <input
+                          type="password"
+                          required
+                          minLength={8}
+                          maxLength={128}
+                          value={recoverConfirmPassword}
+                          onChange={(e) => setRecoverConfirmPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={authLoading}
+                        className="w-full py-2.5 px-4 bg-zinc-950 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer"
+                      >
+                        {authLoading ? 'Restableciendo...' : 'Restablecer contraseña'}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRecoverStep('request');
+                          setAuthError('');
+                        }}
+                        className="w-full text-center text-xs font-medium text-zinc-600 hover:text-zinc-950 cursor-pointer"
+                      >
+                        Solicitar un código nuevo
+                      </button>
+                    </form>
+                  ) : (
+                    <form onSubmit={handleRequestRecoverySubmit} className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-medium text-zinc-700 mb-1">
+                          Correo electrónico registrado
+                        </label>
+                        <input
+                          type="email"
+                          required
+                          maxLength={120}
+                          value={recoverEmail}
+                          onChange={(e) => setRecoverEmail(e.target.value)}
+                          placeholder="cliente@correo.com"
+                          className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={authLoading}
+                        className="w-full py-2.5 px-4 bg-zinc-950 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer"
+                      >
+                        {authLoading
+                          ? 'Procesando...'
+                          : localAvailable && recoverChannel === 'local'
+                            ? 'Generar código de recuperación'
+                            : 'Enviar enlace de recuperación'}
+                      </button>
+
+                      {localAvailable && recoverChannel === 'local' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRecoverStep('confirm_local');
+                            setAuthError('');
+                          }}
+                          className="w-full py-2 px-3 bg-white hover:bg-zinc-50 border border-zinc-300 text-zinc-800 text-xs font-medium rounded-lg transition-colors cursor-pointer"
+                        >
+                          Ya tengo un código de recuperación
+                        </button>
+                      )}
+                    </form>
+                  )}
+
+                  <p className="text-[11px] text-zinc-500 leading-relaxed pt-1 border-t border-zinc-100">
+                    Si ingresás con <span className="font-medium text-zinc-700">Cuenta de Google</span>,
+                    tu contraseña se administra directamente desde tu cuenta de Google.
                   </p>
                 </div>
               )}

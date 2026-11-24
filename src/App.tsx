@@ -3,6 +3,7 @@ import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
   sendEmailVerification,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
@@ -52,6 +53,8 @@ import {
 import {
   fetchLocalBootstrap,
   fetchLocalServerInfo,
+  localConfirmPasswordReset,
+  localRequestPasswordReset,
   loginLocalAccount,
   logoutLocalAccount,
   registerLocalCustomer,
@@ -1051,6 +1054,49 @@ function AppContent() {
     }
   }
 
+  async function handleRequestPasswordReset(input: {
+    email: string;
+    channel: 'local' | 'cloud';
+  }): Promise<{ mode?: 'local' | 'cloud'; email?: string; emailPasswordDisabled?: boolean }> {
+    const cleanEmail = input.email.trim();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      throw new Error('Ingresá un correo electrónico válido.');
+    }
+
+    if (input.channel === 'local') {
+      const info = localServerInfo?.available ? localServerInfo : await fetchLocalServerInfo();
+      if (info?.available) {
+        setLocalServerInfo(info);
+        await localRequestPasswordReset(cleanEmail);
+        return { mode: 'local', email: cleanEmail };
+      }
+    }
+
+    try {
+      await sendPasswordResetEmail(auth, cleanEmail);
+      return { mode: 'cloud', email: cleanEmail };
+    } catch (err) {
+      const code = getFirebaseAuthErrorCode(err);
+      if (code === 'auth/user-not-found') {
+        // Neutral response to avoid account enumeration
+        return { mode: 'cloud', email: cleanEmail };
+      }
+      if (code === 'auth/operation-not-allowed') {
+        return { emailPasswordDisabled: true };
+      }
+      throw new Error(mapFirebaseEmailAuthError(code));
+    }
+  }
+
+  async function handleConfirmLocalPasswordReset(input: {
+    email: string;
+    code: string;
+    newPassword: string;
+  }): Promise<void> {
+    await localConfirmPasswordReset(input);
+    showToast('Contraseña restablecida correctamente. Ya podés ingresar.');
+  }
+
   async function handleSignOut() {
     if (dbMode === 'local') {
       await logoutLocalAccount();
@@ -1332,6 +1378,8 @@ function AppContent() {
         onSetupLocalAdmin={handleSetupLocalAdmin}
         onLoginLocal={handleLoginLocal}
         onRegisterLocal={handleRegisterLocal}
+        onRequestPasswordReset={handleRequestPasswordReset}
+        onConfirmLocalPasswordReset={handleConfirmLocalPasswordReset}
         onProfileSaved={(updates) => {
           if (dbMode === 'cloud') {
             setCloudProfile((prev) => (prev ? { ...prev, ...updates } : prev));

@@ -178,6 +178,38 @@ export async function localChangePassword(input: {
   }
 }
 
+export async function localRequestPasswordReset(email: string): Promise<{ ok: boolean; message?: string }> {
+  return apiRequest<{ ok: boolean; message?: string }>('/api/local/auth/request-password-reset', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function localConfirmPasswordReset(input: {
+  email: string;
+  code: string;
+  newPassword: string;
+}): Promise<void> {
+  await apiRequest<{ ok: boolean }>('/api/local/auth/confirm-password-reset', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function localAdminGenerateRecoveryCode(uid: string): Promise<{
+  code: string;
+  email: string;
+  expiresInMinutes: number;
+}> {
+  return apiRequest<{ code: string; email: string; expiresInMinutes: number }>(
+    `/api/local/admin/accounts/${encodeURIComponent(uid)}/recovery-code`,
+    {
+      method: 'POST',
+      body: '{}',
+    },
+  );
+}
+
 export async function localCreateOrUpdateProduct(productInput: {
   id?: string;
   sku: string;
