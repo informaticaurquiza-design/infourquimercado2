@@ -175,6 +175,35 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidBenefit(data) {
+      return data.keys().hasAll([
+        'title', 'description', 'type', 'targetUserId', 'targetUserName',
+        'promoCode', 'discountPercent', 'minOrderAmount', 'maxInstallments',
+        'active', 'createdAt', 'updatedAt'
+      ])
+        && data.keys().hasOnly([
+          'title', 'description', 'type', 'targetUserId', 'targetUserName',
+          'promoCode', 'discountPercent', 'minOrderAmount', 'maxInstallments',
+          'active', 'createdAt', 'updatedAt'
+        ])
+        && data.title is string && data.title.size() >= 2 && data.title.size() <= 100
+        && data.description is string && data.description.size() <= 240
+        && data.type is string && data.type in ['installments', 'promo_code', 'min_amount_discount']
+        && isValidId(data.targetUserId)
+        && data.targetUserName is string && data.targetUserName.size() >= 2 && data.targetUserName.size() <= 120
+        && data.promoCode is string && data.promoCode.size() <= 24
+        && (data.type != 'promo_code' || (data.promoCode.size() >= 3 && data.promoCode.matches('^[A-Z0-9_\\-]+$')))
+        && data.discountPercent is number && data.discountPercent >= 0 && data.discountPercent <= 90
+        && (data.type == 'installments' || data.discountPercent >= 1)
+        && data.minOrderAmount is number && data.minOrderAmount >= 0 && data.minOrderAmount <= 500000000
+        && (data.type != 'min_amount_discount' || data.minOrderAmount > 0)
+        && data.maxInstallments is int && data.maxInstallments >= 1 && data.maxInstallments <= 12
+        && (data.type != 'installments' || data.maxInstallments >= 2)
+        && data.active is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     function isValidOrder(data) {
       return data.keys().hasAll([
         'orderNumber', 'trackingCode', 'userId', 'customerName', 'customerEmail',
@@ -547,6 +576,31 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time;
       allow delete: if isValidId(agentId) && isVerifiedUser() && isAdmin();
+    }
+
+    // --- Collection: benefits ---
+    match /benefits/{benefitId} {
+      allow get: if isValidId(benefitId) && (
+        existing().targetUserId == 'all'
+        || (isSignedIn() && existing().targetUserId == request.auth.uid)
+        || isAdmin()
+      );
+      allow list: if existing().targetUserId == 'all'
+        || (isSignedIn() && existing().targetUserId == request.auth.uid)
+        || isBootstrappedAdmin();
+      allow create: if isValidId(benefitId)
+        && isVerifiedUser()
+        && isAdmin()
+        && isValidBenefit(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(benefitId)
+        && isVerifiedUser()
+        && isAdmin()
+        && isValidBenefit(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(benefitId) && isVerifiedUser() && isAdmin();
     }
   }
 }

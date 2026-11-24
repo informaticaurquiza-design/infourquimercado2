@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { compressReceiptImage } from '../lib/imageTools';
 import { sendBrowserPush } from '../lib/pushNotifications';
-import { formatCurrency } from '../lib/validation';
+import { evaluateOrderBenefits, formatCurrency } from '../lib/validation';
 import {
   createOrderWithInventoryUpdate,
   parseTransferReceipt,
@@ -28,6 +28,7 @@ import {
 import type {
   AppUser,
   CartItem,
+  CustomerBenefit,
   DeliveryMethod,
   Order,
   PaymentMethod,
@@ -41,6 +42,7 @@ interface CheckoutModalProps {
   onClose: () => void;
   items: CartItem[];
   shippingSettings: StoreSettings;
+  benefits: CustomerBenefit[];
   promoCode: string;
   user: AppUser | null;
   profile: UserProfile | null;
@@ -55,6 +57,7 @@ export function CheckoutModal({
   onClose,
   items,
   shippingSettings,
+  benefits,
   promoCode,
   user,
   profile,
@@ -74,6 +77,7 @@ export function CheckoutModal({
   const [saveDefaultAddress, setSaveDefaultAddress] = useState(true);
 
   const [paymentMethod, setPaymentMethod] = useState<Extract<PaymentMethod, 'transfer' | 'cash'>>('transfer');
+  const [selectedInstallments, setSelectedInstallments] = useState(1);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   // Cash payment state
@@ -118,6 +122,7 @@ export function CheckoutModal({
       setStep('shipping');
       setDeliveryMethod('delivery');
       setPaymentMethod('transfer');
+      setSelectedInstallments(1);
       setErrorMessage('');
       setCompletedOrder(null);
       setCashTendered('');
@@ -136,9 +141,18 @@ export function CheckoutModal({
   const baseShippingCost = Math.max(0, shippingSettings.standardShippingCost);
 
   const subtotal = items.reduce((s, item) => s + item.price * item.quantity, 0);
-  const promoDiscount = promoCode === 'ALBA10' ? Math.round(subtotal * 0.1) : 0;
-  const transferDiscount = paymentMethod === 'transfer' ? Math.round((subtotal - promoDiscount) * 0.05) : 0;
-  const totalDiscount = promoDiscount + transferDiscount;
+  const benefitEval = evaluateOrderBenefits({
+    subtotal,
+    promoCode,
+    benefits,
+    userId: user?.uid,
+  });
+  const promoDiscount = benefitEval.promoDiscount;
+  const thresholdDiscount = benefitEval.thresholdDiscount;
+  const benefitDiscount = benefitEval.combinedBenefitDiscount;
+  const transferDiscount =
+    paymentMethod === 'transfer' ? Math.round(Math.max(0, subtotal - benefitDiscount) * 0.05) : 0;
+  const totalDiscount = Math.min(subtotal, benefitDiscount + transferDiscount);
   const hasFreeShippingProduct = items.some((item) => item.freeShipping);
   const standardDeliveryCost =
     hasFreeShippingProduct || threshold === 0 || subtotal - totalDiscount >= threshold
@@ -147,6 +161,7 @@ export function CheckoutModal({
   const isPickup = deliveryMethod === 'pickup';
   const shippingCost = isPickup ? 0 : standardDeliveryCost;
   const total = Math.max(1, subtotal - totalDiscount + shippingCost);
+  const effectiveInstallments = Math.min(selectedInstallments, benefitEval.maxInstallments);
 
   const parsedCashTendered = cashTendered.trim() ? Number(cashTendered) : NaN;
   const cashChangeDue =
@@ -307,8 +322,12 @@ export function CheckoutModal({
 
     let brand = 'Transferencia CBU';
     let last4 = 'CBU1';
-    const finalInstallments = 1;
+    const finalInstallments = Math.max(1, Math.min(12, effectiveInstallments));
     let finalNotes = shippingNotes.trim();
+    if (finalInstallments > 1) {
+      const instNote = `Plan de ${finalInstallments} cuotas sin interés (${formatCurrency(total / finalInstallments)} c/u)`;
+      finalNotes = finalNotes ? `${finalNotes} · ${instNote}` : instNote;
+    }
     let paymentReceipt: PaymentReceipt | undefined;
 
     if (paymentMethod === 'cash') {
@@ -934,6 +953,41 @@ export function CheckoutModal({
                     })}
                   </div>
 
+                  {/* Dynamic Installment Benefit Selector */}
+                  {benefitEval.maxInstallments > 1 && (
+                    <div className="p-3.5 bg-blue-50/70 border border-blue-200 rounded-xl space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-blue-950">
+                          Plan de cuotas sin interés habilitado
+                        </span>
+                        <span className="text-[11px] font-mono text-blue-700 font-semibold">
+                          Hasta {benefitEval.maxInstallments} cuotas
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {benefitEval.installmentOptions.map((n) => {
+                          const isSelected = effectiveInstallments === n;
+                          return (
+                            <button
+                              key={n}
+                              type="button"
+                              onClick={() => setSelectedInstallments(n)}
+                              className={`px-2.5 py-1.5 text-xs font-mono rounded-lg border transition-colors cursor-pointer ${
+                                isSelected
+                                  ? 'bg-blue-700 text-white border-blue-700 font-semibold'
+                                  : 'bg-white text-zinc-800 border-blue-200 hover:border-blue-600'
+                              }`}
+                            >
+                              {n === 1
+                                ? `1 pago (${formatCurrency(total)})`
+                                : `${n}x ${formatCurrency(total / n)}`}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {paymentMethod === 'transfer' && (
                     <div className="space-y-3.5">
                       <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-3">
@@ -1334,8 +1388,22 @@ export function CheckoutModal({
                   </div>
                   {promoDiscount > 0 && (
                     <div className="flex justify-between text-emerald-700">
-                      <span>Cupón ALBA10</span>
+                      <span>
+                        Cupón {benefitEval.promoCodeApplied} ({benefitEval.promoDiscountPercent}%)
+                      </span>
                       <span className="font-mono tabular-nums">-{formatCurrency(promoDiscount)}</span>
+                    </div>
+                  )}
+                  {thresholdDiscount > 0 && benefitEval.matchedThresholdBenefit && (
+                    <div className="flex justify-between text-emerald-700">
+                      <span>
+                        Beneficio compra ≥{' '}
+                        {formatCurrency(benefitEval.matchedThresholdBenefit.minOrderAmount)} (
+                        {benefitEval.matchedThresholdBenefit.discountPercent}%)
+                      </span>
+                      <span className="font-mono tabular-nums">
+                        -{formatCurrency(thresholdDiscount)}
+                      </span>
                     </div>
                   )}
                   {transferDiscount > 0 && (
@@ -1366,6 +1434,12 @@ export function CheckoutModal({
                     <span>Total a pagar</span>
                     <span className="font-mono tabular-nums">{formatCurrency(total)}</span>
                   </div>
+                  {effectiveInstallments > 1 && (
+                    <p className="text-[11px] text-blue-700 font-mono text-right tabular-nums">
+                      {effectiveInstallments} cuotas sin interés de{' '}
+                      {formatCurrency(total / effectiveInstallments)}
+                    </p>
+                  )}
                 </div>
               </div>
 

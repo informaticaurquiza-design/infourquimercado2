@@ -52,6 +52,7 @@ import {
   generateTransactionId,
   getAccountSubscriptionInfo,
   getPreviousShipmentStatus,
+  validateBenefitInput,
   validateDeliveryAgentInput,
   validateProductInput,
 } from './src/lib/validation.ts';
@@ -60,7 +61,9 @@ import {
   SHIPMENT_PIPELINE,
   type AppNotification,
   type AssignedCourier,
+  type BenefitType,
   type CategoryId,
+  type CustomerBenefit,
   type DeliveryAgent,
   type DeliveryMethod,
   type DeliveryVehicleType,
@@ -207,6 +210,7 @@ function broadcastDbChange(
     | 'notifications'
     | 'settings'
     | 'deliveryAgents'
+    | 'benefits'
     | 'cloudflare'
     | 'all',
 ): void {
@@ -949,6 +953,11 @@ app.get('/api/local/bootstrap', (req, res) => {
 
   const accounts = isAdmin ? db.users.map(toPublicProfile) : [];
   const deliveryAgents = isAdmin ? [...db.deliveryAgents] : [];
+  const benefits = isAdmin
+    ? [...db.benefits]
+    : session
+      ? db.benefits.filter((b) => b.targetUserId === 'all' || b.targetUserId === session.uid)
+      : db.benefits.filter((b) => b.targetUserId === 'all');
 
   const userRecord = session ? db.users.find((u) => u.uid === session.uid) : null;
   const profile = userRecord ? toPublicProfile(userRecord) : null;
@@ -960,6 +969,7 @@ app.get('/api/local/bootstrap', (req, res) => {
     subscriptionPayments,
     accounts,
     deliveryAgents,
+    benefits,
     shippingSettings: db.shippingSettings,
     profile,
     isAdmin,
@@ -1674,6 +1684,133 @@ app.delete('/api/local/delivery-agents/:id', async (req, res) => {
   });
 
   broadcastDbChange('deliveryAgents');
+  res.json({ ok: true });
+});
+
+// --- API: Customer Benefits ABM (Admin Only) ---
+
+function normalizeBenefitBody(body: Record<string, unknown>, dbUsers: StoredLocalUser[]) {
+  const type = String(body.type || '').trim() as BenefitType;
+  const title = clampString(String(body.title || ''), 100);
+  const description = clampString(String(body.description || ''), 240);
+  const targetUserId = clampString(String(body.targetUserId || 'all'), 128) || 'all';
+  let targetUserName = clampString(String(body.targetUserName || ''), 120);
+  if (targetUserId === 'all') {
+    targetUserName = 'Todos los clientes';
+  } else if (!targetUserName) {
+    const matchedUser = dbUsers.find((u) => u.uid === targetUserId);
+    targetUserName = clampString(
+      matchedUser?.displayName || matchedUser?.email || 'Cliente registrado',
+      120,
+    );
+  }
+  const promoCode =
+    type === 'promo_code' ? clampString(String(body.promoCode || '').toUpperCase(), 24) : '';
+  const discountPercent =
+    type === 'installments' ? 0 : Math.round(Number(body.discountPercent ?? 0));
+  const minOrderAmount = Math.max(0, Math.round(Number(body.minOrderAmount ?? 0)));
+  const maxInstallments =
+    type === 'installments' ? Math.round(Number(body.maxInstallments ?? 3)) : 1;
+  const active = body.active !== false;
+
+  const errMsg = validateBenefitInput({
+    title,
+    description,
+    type,
+    targetUserId,
+    targetUserName,
+    promoCode,
+    discountPercent,
+    minOrderAmount,
+    maxInstallments,
+  });
+
+  return {
+    errMsg,
+    normalized: {
+      title,
+      description,
+      type,
+      targetUserId,
+      targetUserName,
+      promoCode,
+      discountPercent,
+      minOrderAmount,
+      maxInstallments,
+      active,
+    },
+  };
+}
+
+app.post('/api/local/benefits', async (req, res) => {
+  const session = requireAdmin(req, res);
+  if (!session) return;
+
+  const db = loadLocalDb();
+  const { errMsg, normalized } = normalizeBenefitBody((req.body ?? {}) as Record<string, unknown>, db.users);
+  if (errMsg) {
+    res.status(400).json({ error: errMsg });
+    return;
+  }
+
+  const nowIso = new Date().toISOString();
+  const created: CustomerBenefit = {
+    id: safeId('ben'),
+    ...normalized,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+
+  await withDbWriteLock((lockedDb) => {
+    lockedDb.benefits.unshift(created);
+  });
+
+  broadcastDbChange('benefits');
+  res.status(201).json(created);
+});
+
+app.put('/api/local/benefits/:id', async (req, res) => {
+  const session = requireAdmin(req, res);
+  if (!session) return;
+
+  const benefitId = String(req.params.id || '').trim();
+  const db = loadLocalDb();
+  const { errMsg, normalized } = normalizeBenefitBody((req.body ?? {}) as Record<string, unknown>, db.users);
+  if (errMsg) {
+    res.status(400).json({ error: errMsg });
+    return;
+  }
+
+  try {
+    const updated = await withDbWriteLock((lockedDb) => {
+      const idx = lockedDb.benefits.findIndex((b) => b.id === benefitId);
+      if (idx === -1) throw new Error('NOT_FOUND');
+      const next: CustomerBenefit = {
+        ...lockedDb.benefits[idx],
+        ...normalized,
+        updatedAt: new Date().toISOString(),
+      };
+      lockedDb.benefits[idx] = next;
+      return next;
+    });
+
+    broadcastDbChange('benefits');
+    res.json(updated);
+  } catch {
+    res.status(404).json({ error: 'Beneficio no encontrado.' });
+  }
+});
+
+app.delete('/api/local/benefits/:id', async (req, res) => {
+  const session = requireAdmin(req, res);
+  if (!session) return;
+
+  const benefitId = String(req.params.id || '').trim();
+  await withDbWriteLock((lockedDb) => {
+    lockedDb.benefits = lockedDb.benefits.filter((b) => b.id !== benefitId);
+  });
+
+  broadcastDbChange('benefits');
   res.json({ ok: true });
 });
 

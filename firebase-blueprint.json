@@ -584,6 +584,74 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "CustomerBenefit": {
+      "title": "CustomerBenefit",
+      "description": "Configurable customer benefit supporting interest-free installments, discount promo codes, or automatic percentage discounts above a minimum purchase amount, scoped globally or to a specific customer.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "type": {
+          "type": "string",
+          "enum": ["installments", "promo_code", "min_amount_discount"]
+        },
+        "targetUserId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "targetUserName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "promoCode": {
+          "type": "string",
+          "maxLength": 24
+        },
+        "discountPercent": {
+          "type": "number"
+        },
+        "minOrderAmount": {
+          "type": "number"
+        },
+        "maxInstallments": {
+          "type": "integer"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "title",
+        "description",
+        "type",
+        "targetUserId",
+        "targetUserName",
+        "promoCode",
+        "discountPercent",
+        "minOrderAmount",
+        "maxInstallments",
+        "active",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -618,6 +686,10 @@
     "/deliveryAgents/{agentId}": {
       "schema": { "$ref": "#/entities/DeliveryAgent" },
       "description": "Fleet of delivery vehicles and drivers (moto, auto, utilitario) managed by admins for order dispatch."
+    },
+    "/benefits/{benefitId}": {
+      "schema": { "$ref": "#/entities/CustomerBenefit" },
+      "description": "Storefront and per-customer benefits (installments, promo codes, and minimum-order discounts) managed by administrators."
     }
   }
 }

@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowRight, Minus, Plus, ShoppingBag, Trash2, X } from 'lucide-react';
-import { formatCurrency } from '../lib/validation';
-import type { CartItem, StoreSettings } from '../types/ecommerce';
+import { evaluateOrderBenefits, formatCurrency } from '../lib/validation';
+import type { AppUser, CartItem, CustomerBenefit, StoreSettings } from '../types/ecommerce';
 import { ProductImage } from './ProductImage';
 
 interface CartDrawerProps {
@@ -9,6 +9,8 @@ interface CartDrawerProps {
   onClose: () => void;
   items: CartItem[];
   shippingSettings: StoreSettings;
+  benefits: CustomerBenefit[];
+  user: AppUser | null;
   promoCode: string;
   onUpdateQuantity: (productId: string, delta: number) => void;
   onRemoveItem: (productId: string) => void;
@@ -21,6 +23,8 @@ export function CartDrawer({
   onClose,
   items,
   shippingSettings,
+  benefits,
+  user,
   onUpdateQuantity,
   onRemoveItem,
   promoCode,
@@ -29,6 +33,14 @@ export function CartDrawer({
 }: CartDrawerProps) {
   const [codeInput, setCodeInput] = useState(promoCode);
   const [promoFeedback, setPromoFeedback] = useState('');
+  const [promoFeedbackTone, setPromoFeedbackTone] = useState<'success' | 'error'>('success');
+
+  useEffect(() => {
+    setCodeInput(promoCode);
+    if (!promoCode) {
+      setPromoFeedback('');
+    }
+  }, [promoCode]);
 
   if (!open) return null;
 
@@ -36,7 +48,14 @@ export function CartDrawer({
   const baseShippingCost = Math.max(0, shippingSettings.standardShippingCost);
 
   const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const discount = promoCode === 'ALBA10' ? Math.round(subtotal * 0.1) : 0;
+  const benefitEval = evaluateOrderBenefits({
+    subtotal,
+    promoCode,
+    benefits,
+    userId: user?.uid,
+  });
+
+  const discount = benefitEval.combinedBenefitDiscount;
   const netSubtotal = Math.max(0, subtotal - discount);
   const hasFreeShippingProduct = items.some((item) => item.freeShipping);
   const shippingCost =
@@ -51,6 +70,10 @@ export function CartDrawer({
       ? 100
       : Math.min(100, Math.round((netSubtotal / threshold) * 100));
 
+  const suggestedPromoCode =
+    benefitEval.promoBenefits[0]?.promoCode ||
+    (benefitEval.promoBenefits.length === 0 ? 'ALBA10' : '');
+
   function handleApplyCode(e: React.FormEvent) {
     e.preventDefault();
     const normalized = codeInput.trim().toUpperCase();
@@ -59,11 +82,33 @@ export function CartDrawer({
       setPromoFeedback('');
       return;
     }
-    if (normalized === 'ALBA10') {
-      onApplyPromo('ALBA10');
-      setPromoFeedback('Código ALBA10 aplicado: 10% de descuento.');
+
+    const testEval = evaluateOrderBenefits({
+      subtotal,
+      promoCode: normalized,
+      benefits,
+      userId: user?.uid,
+    });
+
+    if (testEval.promoCodeApplied) {
+      onApplyPromo(testEval.promoCodeApplied);
+      setPromoFeedbackTone('success');
+      setPromoFeedback(
+        `Código ${testEval.promoCodeApplied} aplicado: ${testEval.promoDiscountPercent}% de descuento.`,
+      );
+    } else if (testEval.promoMinNotMetAmount !== null) {
+      onApplyPromo(normalized);
+      setPromoFeedbackTone('error');
+      setPromoFeedback(
+        `El código ${normalized} requiere una compra mínima de ${formatCurrency(testEval.promoMinNotMetAmount)}.`,
+      );
     } else {
-      setPromoFeedback('Código inválido. Probá con ALBA10.');
+      setPromoFeedbackTone('error');
+      setPromoFeedback(
+        suggestedPromoCode
+          ? `Código inválido o no habilitado para tu cuenta. Probá con ${suggestedPromoCode}.`
+          : 'Código inválido o no habilitado para tu cuenta.',
+      );
     }
   }
 
@@ -91,21 +136,33 @@ export function CartDrawer({
 
         {/* Free shipping indicator */}
         {items.length > 0 && (
-          <div className="px-6 py-3 bg-zinc-50 border-b border-zinc-200">
-            <div className="flex justify-between text-xs mb-1.5">
-              <span className="text-zinc-700">
-                {remainingForFreeShipping === 0
-                  ? 'Tenés envío bonificado en este pedido.'
-                  : `Sumá ${formatCurrency(remainingForFreeShipping)} para envío sin cargo`}
-              </span>
-              <span className="font-mono text-zinc-500 tabular-nums">{freeShippingProgress}%</span>
+          <div className="px-6 py-3 bg-zinc-50 border-b border-zinc-200 space-y-2">
+            <div>
+              <div className="flex justify-between text-xs mb-1.5">
+                <span className="text-zinc-700">
+                  {remainingForFreeShipping === 0
+                    ? 'Tenés envío bonificado en este pedido.'
+                    : `Sumá ${formatCurrency(remainingForFreeShipping)} para envío sin cargo`}
+                </span>
+                <span className="font-mono text-zinc-500 tabular-nums">{freeShippingProgress}%</span>
+              </div>
+              <div className="h-1.5 bg-zinc-200 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-blue-700 transition-transform origin-left duration-200"
+                  style={{ width: `${freeShippingProgress}%` }}
+                />
+              </div>
             </div>
-            <div className="h-1.5 bg-zinc-200 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-blue-700 transition-transform origin-left duration-200"
-                style={{ width: `${freeShippingProgress}%` }}
-              />
-            </div>
+
+            {benefitEval.nextThresholdBenefit && (
+              <p className="text-[11px] text-emerald-700 font-medium">
+                Sumá{' '}
+                <span className="font-mono">
+                  {formatCurrency(Math.max(1, benefitEval.nextThresholdBenefit.minOrderAmount - subtotal))}
+                </span>{' '}
+                más para activar {benefitEval.nextThresholdBenefit.discountPercent}% OFF automático.
+              </p>
+            )}
           </div>
         )}
 
@@ -199,7 +256,11 @@ export function CartDrawer({
                 type="text"
                 value={codeInput}
                 onChange={(e) => setCodeInput(e.target.value)}
-                placeholder="Código de descuento (ej. ALBA10)"
+                placeholder={
+                  suggestedPromoCode
+                    ? `Código de descuento (ej. ${suggestedPromoCode})`
+                    : 'Código de descuento'
+                }
                 className="flex-1 px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700 uppercase font-mono"
               />
               <button
@@ -212,10 +273,16 @@ export function CartDrawer({
             {promoFeedback && (
               <p
                 className={`text-xs ${
-                  promoCode === 'ALBA10' ? 'text-emerald-700' : 'text-red-600'
+                  promoFeedbackTone === 'success' ? 'text-emerald-700' : 'text-red-600'
                 }`}
               >
                 {promoFeedback}
+              </p>
+            )}
+            {!promoFeedback && benefitEval.promoMinNotMetAmount !== null && (
+              <p className="text-xs text-amber-700">
+                El código {promoCode.trim().toUpperCase()} requiere compras desde{' '}
+                {formatCurrency(benefitEval.promoMinNotMetAmount)}.
               </p>
             )}
 
@@ -224,10 +291,26 @@ export function CartDrawer({
                 <span>Subtotal</span>
                 <span className="font-mono tabular-nums">{formatCurrency(subtotal)}</span>
               </div>
-              {discount > 0 && (
+              {benefitEval.promoDiscount > 0 && (
                 <div className="flex justify-between text-emerald-700">
-                  <span>Descuento (ALBA10)</span>
-                  <span className="font-mono tabular-nums">-{formatCurrency(discount)}</span>
+                  <span>
+                    Código {benefitEval.promoCodeApplied} ({benefitEval.promoDiscountPercent}%)
+                  </span>
+                  <span className="font-mono tabular-nums">
+                    -{formatCurrency(benefitEval.promoDiscount)}
+                  </span>
+                </div>
+              )}
+              {benefitEval.thresholdDiscount > 0 && benefitEval.matchedThresholdBenefit && (
+                <div className="flex justify-between text-emerald-700">
+                  <span>
+                    Descuento compra ≥{' '}
+                    {formatCurrency(benefitEval.matchedThresholdBenefit.minOrderAmount)} (
+                    {benefitEval.matchedThresholdBenefit.discountPercent}%)
+                  </span>
+                  <span className="font-mono tabular-nums">
+                    -{formatCurrency(benefitEval.thresholdDiscount)}
+                  </span>
                 </div>
               )}
               <div className="flex justify-between text-zinc-600">
@@ -240,6 +323,12 @@ export function CartDrawer({
                 <span>Total</span>
                 <span className="font-mono tabular-nums">{formatCurrency(total)}</span>
               </div>
+              {benefitEval.maxInstallments > 1 && (
+                <p className="text-[11px] text-blue-700 font-medium text-right font-mono tabular-nums">
+                  Hasta {benefitEval.maxInstallments} cuotas sin interés de{' '}
+                  {formatCurrency(total / benefitEval.maxInstallments)}
+                </p>
+              )}
             </div>
 
             <button

@@ -5,9 +5,11 @@ import type {
   AppNotification,
   AppUser,
   AssignedCourier,
+  BenefitType,
   CartItem,
   CategoryId,
   CloudflareTunnelStatus,
+  CustomerBenefit,
   DatabaseMode,
   DeliveryAgent,
   DeliveryMethod,
@@ -82,6 +84,7 @@ export interface LocalBootstrapPayload {
   subscriptionPayments: SubscriptionPayment[];
   accounts: UserProfile[];
   deliveryAgents?: DeliveryAgent[];
+  benefits?: CustomerBenefit[];
   shippingSettings: StoreSettings;
   profile: UserProfile | null;
   isAdmin: boolean;
@@ -344,6 +347,37 @@ export async function localCreateOrUpdateDeliveryAgent(input: {
 
 export async function localDeleteDeliveryAgent(agentId: string): Promise<void> {
   await apiRequest(`/api/local/delivery-agents/${encodeURIComponent(agentId)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function localCreateOrUpdateBenefit(input: {
+  id?: string;
+  title: string;
+  description: string;
+  type: BenefitType;
+  targetUserId: string;
+  targetUserName: string;
+  promoCode: string;
+  discountPercent: number;
+  minOrderAmount: number;
+  maxInstallments: number;
+  active: boolean;
+}): Promise<CustomerBenefit> {
+  if (input.id) {
+    return apiRequest<CustomerBenefit>(`/api/local/benefits/${encodeURIComponent(input.id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    });
+  }
+  return apiRequest<CustomerBenefit>('/api/local/benefits', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function localDeleteBenefit(benefitId: string): Promise<void> {
+  await apiRequest(`/api/local/benefits/${encodeURIComponent(benefitId)}`, {
     method: 'DELETE',
   });
 }

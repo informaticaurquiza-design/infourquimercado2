@@ -14,8 +14,15 @@ import {
 import { ASSET_IMAGES } from '../lib/categoryAssets';
 import { getProductGallery } from '../lib/imageTools';
 import type { PushPermissionState } from '../lib/pushNotifications';
-import { formatCurrency } from '../lib/validation';
-import { CATEGORY_MAP, type CategoryId, type Product, type StoreSettings } from '../types/ecommerce';
+import { evaluateOrderBenefits, formatCurrency } from '../lib/validation';
+import {
+  CATEGORY_MAP,
+  type AppUser,
+  type CategoryId,
+  type CustomerBenefit,
+  type Product,
+  type StoreSettings,
+} from '../types/ecommerce';
 import { CategorySidebar } from './CategorySidebar';
 import { ProductImage } from './ProductImage';
 
@@ -23,6 +30,8 @@ interface StorefrontViewProps {
   products: Product[];
   loading: boolean;
   shippingSettings: StoreSettings;
+  benefits: CustomerBenefit[];
+  user: AppUser | null;
   selectedCategory: CategoryId | 'all';
   onSelectCategory: (cat: CategoryId | 'all') => void;
   onAddToCart: (product: Product, qty?: number) => void;
@@ -39,6 +48,8 @@ export function StorefrontView({
   products,
   loading,
   shippingSettings,
+  benefits,
+  user,
   selectedCategory,
   onSelectCategory,
   onAddToCart,
@@ -48,6 +59,20 @@ export function StorefrontView({
   onOpenMobileSidebar,
   onCloseMobileSidebar,
 }: StorefrontViewProps) {
+  const storefrontBenefits = useMemo(
+    () =>
+      evaluateOrderBenefits({
+        subtotal: 0,
+        promoCode: '',
+        benefits,
+        userId: user?.uid,
+      }),
+    [benefits, user?.uid],
+  );
+  const featuredPromoBenefit = storefrontBenefits.promoBenefits[0] ?? null;
+  const featuredThresholdBenefit =
+    storefrontBenefits.applicableBenefits.find((b) => b.type === 'min_amount_discount') ?? null;
+  const heroInstallments = storefrontBenefits.catalogMaxInstallments;
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('featured');
   const [onlyFreeShipping, setOnlyFreeShipping] = useState(false);
@@ -266,9 +291,9 @@ export function StorefrontView({
             <div className="grid grid-cols-3 gap-4 pt-8 mt-8 border-t border-zinc-200">
               <div>
                 <p className="font-mono text-sm font-semibold text-zinc-950 tabular-nums">
-                  6 cuotas
+                  {heroInstallments} cuotas
                 </p>
-                <p className="text-xs text-zinc-500 mt-0.5">Sin interés con tarjeta</p>
+                <p className="text-xs text-zinc-500 mt-0.5">Sin interés vigentes</p>
               </div>
               <div>
                 <p className="font-mono text-sm font-semibold text-zinc-950 tabular-nums">
@@ -279,10 +304,32 @@ export function StorefrontView({
                 <p className="text-xs text-zinc-500 mt-0.5">Envío bonificado</p>
               </div>
               <div>
-                <p className="font-mono text-sm font-semibold text-zinc-950 tabular-nums">
-                  10% OFF
-                </p>
-                <p className="text-xs text-zinc-500 mt-0.5">Código ALBA10</p>
+                {featuredPromoBenefit ? (
+                  <>
+                    <p className="font-mono text-sm font-semibold text-zinc-950 tabular-nums">
+                      {featuredPromoBenefit.discountPercent}% OFF
+                    </p>
+                    <p className="text-xs text-zinc-500 mt-0.5">
+                      Código {featuredPromoBenefit.promoCode}
+                    </p>
+                  </>
+                ) : featuredThresholdBenefit ? (
+                  <>
+                    <p className="font-mono text-sm font-semibold text-zinc-950 tabular-nums">
+                      {featuredThresholdBenefit.discountPercent}% OFF
+                    </p>
+                    <p className="text-xs text-zinc-500 mt-0.5">
+                      Compras {formatCurrency(featuredThresholdBenefit.minOrderAmount)}+
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="font-mono text-sm font-semibold text-zinc-950 tabular-nums">
+                      10% OFF
+                    </p>
+                    <p className="text-xs text-zinc-500 mt-0.5">Código ALBA10</p>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -695,9 +742,9 @@ export function StorefrontView({
                   </div>
 
                   <p className="text-xs text-zinc-600 mb-5">
-                    Hasta 6 cuotas sin interés de{' '}
+                    Hasta {heroInstallments} cuotas sin interés de{' '}
                     <span className="font-mono font-medium text-zinc-900 tabular-nums">
-                      {formatCurrency(liveSelectedProduct.price / 6)}
+                      {formatCurrency(liveSelectedProduct.price / heroInstallments)}
                     </span>
                     {qualifiesForFreeShipping(liveSelectedProduct) && (
                       <span className="text-emerald-700 font-medium">

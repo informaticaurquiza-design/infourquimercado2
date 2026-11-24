@@ -7,8 +7,10 @@ import { auth } from '../lib/firebase';
 import type {
   AppUser,
   AssignedCourier,
+  BenefitType,
   CartItem,
   CategoryId,
+  CustomerBenefit,
   DatabaseMode,
   DeliveryAgent,
   DeliveryMethod,
@@ -29,9 +31,11 @@ import {
   adminSetCloudAccountStatus,
   advanceOrderShipmentStatus as cloudAdvanceOrderShipmentStatus,
   cancelCustomerOrder as cloudCancelCustomerOrder,
+  createOrUpdateBenefit as cloudCreateOrUpdateBenefit,
   createOrUpdateDeliveryAgent as cloudCreateOrUpdateDeliveryAgent,
   createOrUpdateProduct as cloudCreateOrUpdateProduct,
   createOrderWithInventoryUpdate as cloudCreateOrderWithInventoryUpdate,
+  deleteBenefitById as cloudDeleteBenefitById,
   deleteDeliveryAgentById as cloudDeleteDeliveryAgentById,
   deleteNotificationById as cloudDeleteNotificationById,
   deleteProductById as cloudDeleteProductById,
@@ -50,9 +54,11 @@ import {
   localAdvanceOrderShipmentStatus,
   localCancelOrder,
   localChangePassword,
+  localCreateOrUpdateBenefit,
   localCreateOrUpdateDeliveryAgent,
   localCreateOrUpdateProduct,
   localCreateOrder,
+  localDeleteBenefit,
   localDeleteDeliveryAgent,
   localDeleteNotification,
   localDeleteProduct,
@@ -284,6 +290,33 @@ export async function deleteDeliveryAgentById(agentId: string): Promise<void> {
     return;
   }
   await cloudDeleteDeliveryAgentById(agentId);
+}
+
+export async function createOrUpdateBenefit(input: {
+  id?: string;
+  title: string;
+  description: string;
+  type: BenefitType;
+  targetUserId: string;
+  targetUserName: string;
+  promoCode: string;
+  discountPercent: number;
+  minOrderAmount: number;
+  maxInstallments: number;
+  active: boolean;
+}): Promise<CustomerBenefit> {
+  if (currentDbMode === 'local') {
+    return localCreateOrUpdateBenefit(input);
+  }
+  return cloudCreateOrUpdateBenefit(input);
+}
+
+export async function deleteBenefitById(benefitId: string): Promise<void> {
+  if (currentDbMode === 'local') {
+    await localDeleteBenefit(benefitId);
+    return;
+  }
+  await cloudDeleteBenefitById(benefitId);
 }
 
 export async function cancelCustomerOrder(order: Order): Promise<void> {

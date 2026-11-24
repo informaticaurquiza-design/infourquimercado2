@@ -67,6 +67,7 @@ import type {
   AppUser,
   CartItem,
   CategoryId,
+  CustomerBenefit,
   DatabaseMode,
   DeliveryAgent,
   LocalServerInfo,
@@ -220,6 +221,9 @@ function AppContent() {
   const [cloudOrders, setCloudOrders] = useState<Order[]>([]);
   const [cloudAccounts, setCloudAccounts] = useState<UserProfile[]>([]);
   const [cloudDeliveryAgents, setCloudDeliveryAgents] = useState<DeliveryAgent[]>([]);
+  const [cloudAdminBenefits, setCloudAdminBenefits] = useState<CustomerBenefit[]>([]);
+  const [cloudGlobalBenefits, setCloudGlobalBenefits] = useState<CustomerBenefit[]>([]);
+  const [cloudPersonalBenefits, setCloudPersonalBenefits] = useState<CustomerBenefit[]>([]);
   const [cloudSubscriptionPayments, setCloudSubscriptionPayments] = useState<SubscriptionPayment[]>(
     [],
   );
@@ -241,6 +245,7 @@ function AppContent() {
   const [localOrders, setLocalOrders] = useState<Order[]>([]);
   const [localAccounts, setLocalAccounts] = useState<UserProfile[]>([]);
   const [localDeliveryAgents, setLocalDeliveryAgents] = useState<DeliveryAgent[]>([]);
+  const [localBenefits, setLocalBenefits] = useState<CustomerBenefit[]>([]);
   const [localSubscriptionPayments, setLocalSubscriptionPayments] = useState<SubscriptionPayment[]>(
     [],
   );
@@ -364,6 +369,11 @@ function AppContent() {
       setLocalOrders(sortedOrders);
       setLocalAccounts(Array.isArray(payload.accounts) ? payload.accounts : []);
       setLocalDeliveryAgents(Array.isArray(payload.deliveryAgents) ? payload.deliveryAgents : []);
+      setLocalBenefits(
+        Array.isArray(payload.benefits)
+          ? [...payload.benefits].sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt))
+          : [],
+      );
       setLocalSubscriptionPayments(sortedSubPayments);
       setLocalShippingSettings(payload.shippingSettings);
       setLocalIsAdmin(payload.isAdmin);
@@ -747,6 +757,88 @@ function AppContent() {
     return () => unsubscribe();
   }, [dbMode, cloudAuthReady, cloudIsAdmin]);
 
+  // 4f. Real-time Benefits Listeners (Cloud Mode: full list for Admin; global + personal for customers/guests)
+  useEffect(() => {
+    if (dbMode !== 'cloud' || !cloudAuthReady) {
+      setCloudAdminBenefits([]);
+      setCloudGlobalBenefits([]);
+      setCloudPersonalBenefits([]);
+      return;
+    }
+
+    if (cloudIsAdmin) {
+      setCloudGlobalBenefits([]);
+      setCloudPersonalBenefits([]);
+      const unsubAdmin = onSnapshot(
+        query(collection(db, 'benefits')),
+        (snapshot) => {
+          const list = snapshot.docs
+            .map((d) => ({
+              id: d.id,
+              ...(d.data() as Omit<CustomerBenefit, 'id'>),
+            }))
+            .sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt));
+          setCloudAdminBenefits(list);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'benefits');
+        },
+      );
+      return () => unsubAdmin();
+    }
+
+    setCloudAdminBenefits([]);
+    const unsubGlobal = onSnapshot(
+      query(collection(db, 'benefits'), where('targetUserId', '==', 'all')),
+      (snapshot) => {
+        const list = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<CustomerBenefit, 'id'>),
+        }));
+        setCloudGlobalBenefits(list);
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'benefits');
+      },
+    );
+
+    if (!cloudUser) {
+      setCloudPersonalBenefits([]);
+      return () => unsubGlobal();
+    }
+
+    const unsubPersonal = onSnapshot(
+      query(collection(db, 'benefits'), where('targetUserId', '==', cloudUser.uid)),
+      (snapshot) => {
+        const list = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<CustomerBenefit, 'id'>),
+        }));
+        setCloudPersonalBenefits(list);
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'benefits');
+      },
+    );
+
+    return () => {
+      unsubGlobal();
+      unsubPersonal();
+    };
+  }, [dbMode, cloudAuthReady, cloudIsAdmin, cloudUser]);
+
+  const cloudAllBenefits = useMemo(() => {
+    if (cloudIsAdmin) return cloudAdminBenefits;
+    const merged = [...cloudPersonalBenefits, ...cloudGlobalBenefits];
+    const uniqueMap = new Map<string, CustomerBenefit>();
+    for (const item of merged) {
+      uniqueMap.set(item.id, item);
+    }
+    return Array.from(uniqueMap.values()).sort(
+      (a, b) => getMillis(b.createdAt) - getMillis(a.createdAt),
+    );
+  }, [cloudIsAdmin, cloudAdminBenefits, cloudPersonalBenefits, cloudGlobalBenefits]);
+
   const cloudAllNotifications = useMemo(() => {
     const merged = [...cloudPersonalNotifications, ...cloudBroadcastNotifications];
     const uniqueMap = new Map<string, AppNotification>();
@@ -771,6 +863,7 @@ function AppContent() {
   const activeAccounts = dbMode === 'local' ? localAccounts : cloudAccounts;
   const activeDeliveryAgents =
     dbMode === 'local' ? localDeliveryAgents : cloudDeliveryAgents;
+  const activeBenefits = dbMode === 'local' ? localBenefits : cloudAllBenefits;
   const activeSubscriptionPayments =
     dbMode === 'local' ? localSubscriptionPayments : cloudSubscriptionPayments;
   const activeNotifications = dbMode === 'local' ? localNotifications : cloudAllNotifications;
@@ -1251,6 +1344,8 @@ function AppContent() {
             products={storefrontProducts}
             loading={activeProductsLoading}
             shippingSettings={activeShippingSettings}
+            benefits={activeBenefits}
+            user={activeUser}
             selectedCategory={selectedCategory}
             onSelectCategory={setSelectedCategory}
             onAddToCart={handleAddToCart}
@@ -1277,7 +1372,15 @@ function AppContent() {
         {activeView === 'notifications' && (
           <NotificationsView
             user={activeUser}
+            isAdmin={activeIsAdmin}
             notifications={activeNotifications}
+            benefits={activeBenefits}
+            accounts={activeAccounts}
+            activePromoCode={promoCode}
+            onApplyPromoCode={(code) => {
+              setPromoCode(code);
+              showToast(`Código ${code} aplicado a tu carrito.`);
+            }}
             pushPermission={pushPermission}
             onEnablePush={handleEnablePush}
             onRequireSignIn={() => setAccountOpen(true)}
@@ -1362,6 +1465,8 @@ function AppContent() {
         onClose={() => setCartOpen(false)}
         items={cart}
         shippingSettings={activeShippingSettings}
+        benefits={activeBenefits}
+        user={activeUser}
         onUpdateQuantity={handleUpdateCartQty}
         onRemoveItem={handleRemoveCartItem}
         promoCode={promoCode}
@@ -1377,6 +1482,7 @@ function AppContent() {
         onClose={() => setCheckoutOpen(false)}
         items={cart}
         shippingSettings={activeShippingSettings}
+        benefits={activeBenefits}
         promoCode={promoCode}
         user={activeUser}
         profile={activeProfile}

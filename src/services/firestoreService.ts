@@ -35,6 +35,7 @@ import {
   generateTrackingCode,
   generateTransactionId,
   getPreviousShipmentStatus,
+  validateBenefitInput,
   validateDeliveryAgentInput,
   validateProductInput,
 } from '../lib/validation';
@@ -42,8 +43,10 @@ import type {
   AppNotification,
   AppUser,
   AssignedCourier,
+  BenefitType,
   CartItem,
   CategoryId,
+  CustomerBenefit,
   DatabaseBackupPayload,
   DeliveryAgent,
   DeliveryMethod,
@@ -739,6 +742,109 @@ export async function deleteDeliveryAgentById(agentId: string): Promise<void> {
     await deleteDoc(doc(db, 'deliveryAgents', agentId));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, agentPath);
+  }
+}
+
+export async function createOrUpdateBenefit(input: {
+  id?: string;
+  title: string;
+  description: string;
+  type: BenefitType;
+  targetUserId: string;
+  targetUserName: string;
+  promoCode: string;
+  discountPercent: number;
+  minOrderAmount: number;
+  maxInstallments: number;
+  active: boolean;
+}): Promise<CustomerBenefit> {
+  const title = clampString(input.title, 100);
+  const description = clampString(input.description, 240);
+  const targetUserId = clampString(input.targetUserId || 'all', 128) || 'all';
+  const targetUserName =
+    targetUserId === 'all'
+      ? 'Todos los clientes'
+      : clampString(input.targetUserName || 'Cliente registrado', 120);
+  const promoCode =
+    input.type === 'promo_code' ? clampString(input.promoCode.toUpperCase(), 24) : '';
+  const discountPercent =
+    input.type === 'installments' ? 0 : Math.round(Number(input.discountPercent || 0));
+  const minOrderAmount = Math.max(0, Math.round(Number(input.minOrderAmount || 0)));
+  const maxInstallments =
+    input.type === 'installments' ? Math.round(Number(input.maxInstallments || 3)) : 1;
+
+  const errMsg = validateBenefitInput({
+    title,
+    description,
+    type: input.type,
+    targetUserId,
+    targetUserName,
+    promoCode,
+    discountPercent,
+    minOrderAmount,
+    maxInstallments,
+  });
+  if (errMsg) {
+    throw new Error(errMsg);
+  }
+
+  const benefitId = input.id && ID_PATTERN.test(input.id) ? input.id : safeId('ben');
+  const benefitPath = `benefits/${benefitId}`;
+  const ref = doc(db, 'benefits', benefitId);
+  const nowIso = new Date().toISOString();
+
+  const commonFields = {
+    title,
+    description,
+    type: input.type,
+    targetUserId,
+    targetUserName,
+    promoCode,
+    discountPercent,
+    minOrderAmount,
+    maxInstallments,
+    active: Boolean(input.active),
+    updatedAt: serverTimestamp(),
+  };
+
+  try {
+    if (input.id) {
+      await updateDoc(ref, commonFields);
+    } else {
+      await setDoc(ref, {
+        ...commonFields,
+        createdAt: serverTimestamp(),
+      });
+    }
+    return {
+      id: benefitId,
+      title,
+      description,
+      type: input.type,
+      targetUserId,
+      targetUserName,
+      promoCode,
+      discountPercent,
+      minOrderAmount,
+      maxInstallments,
+      active: Boolean(input.active),
+      updatedAt: nowIso,
+    };
+  } catch (error) {
+    handleFirestoreError(
+      error,
+      input.id ? OperationType.UPDATE : OperationType.CREATE,
+      benefitPath,
+    );
+  }
+}
+
+export async function deleteBenefitById(benefitId: string): Promise<void> {
+  const benefitPath = `benefits/${benefitId}`;
+  try {
+    await deleteDoc(doc(db, 'benefits', benefitId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, benefitPath);
   }
 }
 

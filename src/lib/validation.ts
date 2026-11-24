@@ -1,5 +1,7 @@
 import type {
+  BenefitType,
   CategoryId,
+  CustomerBenefit,
   DeliveryVehicleType,
   ShipmentStatus,
   UserProfile,
@@ -11,6 +13,7 @@ export const ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 export const ORDER_NUMBER_PATTERN = /^ALB-[0-9]{4}-[0-9]{4}$/;
 export const TRACKING_CODE_PATTERN = /^TRK-[A-Z0-9]{8}$/;
 export const LICENSE_PLATE_PATTERN = /^[A-Z0-9 -]{4,16}$/;
+export const PROMO_CODE_PATTERN = /^[A-Z0-9_-]{3,24}$/;
 
 export const FREE_SHIPPING_THRESHOLD = 150000;
 export const STANDARD_SHIPPING_COST = 8500;
@@ -238,6 +241,229 @@ export function validateDeliveryAgentInput(input: {
     return 'Ingresá el nombre completo del repartidor (entre 2 y 100 caracteres).';
   }
   return null;
+}
+
+export function getBenefitTypeLabel(type: BenefitType): string {
+  switch (type) {
+    case 'installments':
+      return 'Cuotas sin interés';
+    case 'promo_code':
+      return 'Código de descuento';
+    case 'min_amount_discount':
+      return 'Descuento por monto';
+  }
+}
+
+export function validateBenefitInput(input: {
+  title: string;
+  description: string;
+  type: string;
+  targetUserId: string;
+  targetUserName: string;
+  promoCode: string;
+  discountPercent: number;
+  minOrderAmount: number;
+  maxInstallments: number;
+}): string | null {
+  const title = input.title.trim();
+  if (title.length < 2 || title.length > 100) {
+    return 'El título del beneficio debe tener entre 2 y 100 caracteres.';
+  }
+  if (input.description.trim().length > 240) {
+    return 'La descripción no puede superar los 240 caracteres.';
+  }
+  if (!['installments', 'promo_code', 'min_amount_discount'].includes(input.type)) {
+    return 'Seleccioná un tipo de beneficio válido.';
+  }
+  const targetUserId = input.targetUserId.trim();
+  if (!targetUserId || targetUserId.length > 128 || !ID_PATTERN.test(targetUserId)) {
+    return 'Seleccioná un cliente destinatario válido (o Todos los clientes).';
+  }
+  if (input.targetUserName.trim().length < 2 || input.targetUserName.trim().length > 120) {
+    return 'El nombre del destinatario es obligatorio.';
+  }
+  if (
+    !Number.isFinite(input.minOrderAmount) ||
+    input.minOrderAmount < 0 ||
+    input.minOrderAmount > 500000000
+  ) {
+    return 'El monto mínimo debe ser un número mayor o igual a 0.';
+  }
+
+  if (input.type === 'installments') {
+    if (
+      !Number.isInteger(input.maxInstallments) ||
+      input.maxInstallments < 2 ||
+      input.maxInstallments > 12
+    ) {
+      return 'La cantidad de cuotas sin interés debe estar entre 2 y 12.';
+    }
+  } else if (input.type === 'promo_code') {
+    const code = input.promoCode.trim().toUpperCase();
+    if (!PROMO_CODE_PATTERN.test(code)) {
+      return 'El código debe tener entre 3 y 24 caracteres (solo letras, números, guiones o guion bajo).';
+    }
+    if (
+      !Number.isFinite(input.discountPercent) ||
+      input.discountPercent < 1 ||
+      input.discountPercent > 90
+    ) {
+      return 'El porcentaje de descuento debe estar entre 1% y 90%.';
+    }
+  } else if (input.type === 'min_amount_discount') {
+    if (input.minOrderAmount <= 0) {
+      return 'Para descuento por monto, el monto mínimo debe ser mayor a $0.';
+    }
+    if (
+      !Number.isFinite(input.discountPercent) ||
+      input.discountPercent < 1 ||
+      input.discountPercent > 90
+    ) {
+      return 'El porcentaje de descuento debe estar entre 1% y 90%.';
+    }
+  }
+  return null;
+}
+
+export function getInstallmentOptions(maxInstallments: number): number[] {
+  const safeMax = Math.max(1, Math.min(12, Math.floor(maxInstallments)));
+  const standard = [1, 2, 3, 6, 9, 12].filter((n) => n <= safeMax);
+  if (!standard.includes(safeMax)) {
+    standard.push(safeMax);
+  }
+  return standard.sort((a, b) => a - b);
+}
+
+export interface OrderBenefitsEvaluation {
+  applicableBenefits: CustomerBenefit[];
+  promoBenefits: CustomerBenefit[];
+  matchedPromoBenefit: CustomerBenefit | null;
+  promoCodeApplied: string;
+  promoDiscountPercent: number;
+  promoDiscount: number;
+  promoMinNotMetAmount: number | null;
+  matchedThresholdBenefit: CustomerBenefit | null;
+  nextThresholdBenefit: CustomerBenefit | null;
+  thresholdDiscount: number;
+  combinedBenefitDiscount: number;
+  matchedInstallmentsBenefit: CustomerBenefit | null;
+  catalogMaxInstallments: number;
+  maxInstallments: number;
+  installmentOptions: number[];
+}
+
+export function evaluateOrderBenefits(params: {
+  subtotal: number;
+  promoCode: string;
+  benefits: CustomerBenefit[];
+  userId?: string | null;
+}): OrderBenefitsEvaluation {
+  const subtotal = Math.max(0, Math.round(params.subtotal));
+  const normalizedCode = params.promoCode.trim().toUpperCase();
+  const userId = params.userId || null;
+
+  const applicableBenefits = params.benefits.filter(
+    (b) => b.active && (b.targetUserId === 'all' || (Boolean(userId) && b.targetUserId === userId)),
+  );
+
+  // 1. Promo code matching
+  const promoBenefits = applicableBenefits.filter((b) => b.type === 'promo_code' && b.promoCode);
+  let matchedPromoBenefit: CustomerBenefit | null = null;
+  let promoCodeApplied = '';
+  let promoDiscountPercent = 0;
+  let promoDiscount = 0;
+  let promoMinNotMetAmount: number | null = null;
+
+  if (normalizedCode) {
+    const exactCandidates = promoBenefits.filter(
+      (b) => b.promoCode.trim().toUpperCase() === normalizedCode,
+    );
+    if (exactCandidates.length > 0) {
+      // Prefer personal benefit over global, then highest discount
+      exactCandidates.sort((a, b) => {
+        const aPersonal = a.targetUserId !== 'all' ? 1 : 0;
+        const bPersonal = b.targetUserId !== 'all' ? 1 : 0;
+        if (bPersonal !== aPersonal) return bPersonal - aPersonal;
+        return b.discountPercent - a.discountPercent;
+      });
+      const bestMatch = exactCandidates[0];
+      if (subtotal >= bestMatch.minOrderAmount || subtotal === 0) {
+        matchedPromoBenefit = bestMatch;
+        promoCodeApplied = bestMatch.promoCode.trim().toUpperCase();
+        promoDiscountPercent = bestMatch.discountPercent;
+        promoDiscount = Math.round(subtotal * (bestMatch.discountPercent / 100));
+      } else {
+        promoMinNotMetAmount = bestMatch.minOrderAmount;
+      }
+    } else if (promoBenefits.length === 0 && normalizedCode === 'ALBA10') {
+      // Backward-compatible default store coupon when no custom promo codes exist yet
+      promoCodeApplied = 'ALBA10';
+      promoDiscountPercent = 10;
+      promoDiscount = Math.round(subtotal * 0.1);
+    }
+  }
+
+  // 2. Automatic threshold discount (min_amount_discount)
+  const thresholdBenefits = applicableBenefits.filter(
+    (b) => b.type === 'min_amount_discount' && b.minOrderAmount > 0 && b.discountPercent > 0,
+  );
+  const qualifiedThresholds = thresholdBenefits.filter((b) => subtotal >= b.minOrderAmount);
+  qualifiedThresholds.sort((a, b) => {
+    if (b.discountPercent !== a.discountPercent) return b.discountPercent - a.discountPercent;
+    return a.minOrderAmount - b.minOrderAmount;
+  });
+  const matchedThresholdBenefit = qualifiedThresholds[0] ?? null;
+  const thresholdDiscount = matchedThresholdBenefit
+    ? Math.round(subtotal * (matchedThresholdBenefit.discountPercent / 100))
+    : 0;
+
+  const currentThresholdPct = matchedThresholdBenefit?.discountPercent ?? 0;
+  const upcomingThresholds = thresholdBenefits
+    .filter((b) => b.minOrderAmount > subtotal && b.discountPercent > currentThresholdPct)
+    .sort((a, b) => a.minOrderAmount - b.minOrderAmount);
+  const nextThresholdBenefit = upcomingThresholds[0] ?? null;
+
+  const combinedBenefitDiscount = Math.min(subtotal, promoDiscount + thresholdDiscount);
+
+  // 3. Installments (cuotas sin interés)
+  const installmentBenefits = applicableBenefits.filter(
+    (b) => b.type === 'installments' && b.maxInstallments >= 2,
+  );
+  const catalogMaxInstallments =
+    installmentBenefits.length > 0
+      ? Math.max(...installmentBenefits.map((b) => b.maxInstallments))
+      : 6;
+
+  const qualifiedInstallments = installmentBenefits.filter(
+    (b) => subtotal === 0 || subtotal >= b.minOrderAmount,
+  );
+  qualifiedInstallments.sort((a, b) => b.maxInstallments - a.maxInstallments);
+  const matchedInstallmentsBenefit = qualifiedInstallments[0] ?? null;
+
+  const maxInstallments =
+    installmentBenefits.length === 0
+      ? 6
+      : matchedInstallmentsBenefit
+        ? matchedInstallmentsBenefit.maxInstallments
+        : 1;
+
+  return {
+    applicableBenefits,
+    promoBenefits,
+    matchedPromoBenefit,
+    promoCodeApplied,
+    promoDiscountPercent,
+    promoDiscount,
+    promoMinNotMetAmount,
+    matchedThresholdBenefit,
+    nextThresholdBenefit,
+    thresholdDiscount,
+    combinedBenefitDiscount,
+    matchedInstallmentsBenefit,
+    catalogMaxInstallments,
+    maxInstallments,
+    installmentOptions: getInstallmentOptions(maxInstallments),
+  };
 }
 
 function parseTimestampValue(value: unknown): Date | null {

@@ -136,6 +136,46 @@ export interface AssignedCourier {
   licensePlate: string;
 }
 
+export type BenefitType = 'installments' | 'promo_code' | 'min_amount_discount';
+
+export const BENEFIT_TYPE_OPTIONS: {
+  value: BenefitType;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: 'installments',
+    label: 'Cuotas sin interés',
+    description: 'Define la cantidad máxima de cuotas sin interés habilitadas.',
+  },
+  {
+    value: 'promo_code',
+    label: 'Código de descuento',
+    description: 'Cupón promocional con un porcentaje de descuento al ingresarlo.',
+  },
+  {
+    value: 'min_amount_discount',
+    label: 'Descuento por monto',
+    description: 'Porcentaje de descuento automático en compras mayores a un monto.',
+  },
+];
+
+export interface CustomerBenefit {
+  id: string;
+  title: string;
+  description: string;
+  type: BenefitType;
+  targetUserId: string;
+  targetUserName: string;
+  promoCode: string;
+  discountPercent: number;
+  minOrderAmount: number;
+  maxInstallments: number;
+  active: boolean;
+  createdAt?: Timestamp | string;
+  updatedAt?: Timestamp | string;
+}
+
 export type PaymentMethod = 'card' | 'wallet' | 'transfer' | 'cash';
 export type PaymentStatus = 'approved' | 'pending_transfer' | 'pending_cash' | 'refunded';
 export type ShipmentStatus =
