@@ -776,7 +776,7 @@ function AppContent() {
     bankCbuCvu?: string;
     bankAlias?: string;
     bankAccountHolder?: string;
-  }): Promise<{ switchedToLocal?: boolean }> {
+  }): Promise<{ switchedToLocal?: boolean; unauthorizedDomain?: string }> {
     let credential;
     try {
       credential = await signInWithPopup(auth, googleProvider);
@@ -796,9 +796,7 @@ function AppContent() {
           showToast('Usá la opción de Cuenta local para ingresar desde esta red.');
           return { switchedToLocal: true };
         }
-        throw new Error(
-          `El dominio "${window.location.hostname}" no está autorizado para iniciar sesión con Google. Agregalo en Firebase Authentication → Dominios autorizados o utilizá la opción de Cuenta local.`,
-        );
+        return { unauthorizedDomain: window.location.hostname };
       }
       throw err;
     }

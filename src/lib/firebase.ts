@@ -9,6 +9,7 @@ export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
+export const FIREBASE_PROJECT_ID = firebaseConfig.projectId;
 export const BOOTSTRAPPED_ADMIN_EMAIL = 'informaticaurquiza@gmail.com';
 
 export enum OperationType {

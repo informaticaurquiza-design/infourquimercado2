@@ -2,8 +2,11 @@ import { useEffect, useState } from 'react';
 import {
   Bell,
   CalendarClock,
+  Check,
   ChevronDown,
   ChevronUp,
+  Copy,
+  ExternalLink,
   Info,
   KeyRound,
   Landmark,
@@ -12,6 +15,7 @@ import {
   User as UserIcon,
   X,
 } from 'lucide-react';
+import { FIREBASE_PROJECT_ID } from '../lib/firebase';
 import type { PushPermissionState } from '../lib/pushNotifications';
 import {
   SELLER_TRIAL_NOTICE,
@@ -51,7 +55,7 @@ interface AccountModalProps {
   isAdmin: boolean;
   onSignInGoogle: (
     optionalSignupData?: CloudSignupProfileInput,
-  ) => Promise<{ switchedToLocal?: boolean } | void>;
+  ) => Promise<{ switchedToLocal?: boolean; unauthorizedDomain?: string } | void>;
   onSetupLocalAdmin: (input: {
     email: string;
     displayName: string;
@@ -153,6 +157,8 @@ export function AccountModal({
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
   const [authNotice, setAuthNotice] = useState('');
+  const [unauthorizedDomain, setUnauthorizedDomain] = useState('');
+  const [copiedDomain, setCopiedDomain] = useState(false);
 
   // Signed-in password change state
   const [showPasswordSection, setShowPasswordSection] = useState(false);
@@ -179,6 +185,8 @@ export function AccountModal({
     if (open) {
       setAuthError('');
       setAuthNotice('');
+      setUnauthorizedDomain('');
+      setCopiedDomain(false);
       setAuthPassword('');
       setSignupName('');
       setSignupBusiness('');
@@ -244,6 +252,7 @@ export function AccountModal({
   async function handleGoogleAuth(isRegister: boolean) {
     setAuthError('');
     setAuthNotice('');
+    setUnauthorizedDomain('');
     setAuthLoading(true);
     try {
       const result = await onSignInGoogle(
@@ -264,6 +273,10 @@ export function AccountModal({
         setAuthNotice(
           'Google no autoriza direcciones locales o IPs privadas de red. Podés continuar directamente con Cuenta local (correo y contraseña) aquí mismo.',
         );
+        return;
+      }
+      if (result && result.unauthorizedDomain) {
+        setUnauthorizedDomain(result.unauthorizedDomain);
         return;
       }
       onClose();
@@ -536,6 +549,55 @@ export function AccountModal({
                 <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 flex items-start gap-2">
                   <Info className="w-4 h-4 text-blue-700 shrink-0 mt-0.5" />
                   <p className="text-xs text-blue-950 leading-relaxed">{authNotice}</p>
+                </div>
+              )}
+
+              {unauthorizedDomain && (
+                <div className="p-3.5 rounded-lg bg-amber-50 border border-amber-200 space-y-2.5 text-xs text-amber-950">
+                  <p className="font-semibold">
+                    Falta autorizar este dominio en Firebase Authentication
+                  </p>
+                  <p className="text-amber-900 leading-relaxed">
+                    Google bloqueó el inicio de sesión porque este dominio todavía no está en la
+                    lista de <span className="font-semibold">Dominios autorizados</span> del
+                    proyecto Firebase. Copialo y agregalo en un clic:
+                  </p>
+                  <div className="flex items-center justify-between gap-2 px-2.5 py-2 bg-white border border-amber-200 rounded-md">
+                    <code className="font-mono text-[11px] text-zinc-900 break-all">
+                      {unauthorizedDomain}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(unauthorizedDomain);
+                        setCopiedDomain(true);
+                        onNotifyToast('Dominio copiado al portapapeles.');
+                        window.setTimeout(() => setCopiedDomain(false), 2000);
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-zinc-800 bg-zinc-50 hover:bg-zinc-100 border border-zinc-300 rounded cursor-pointer shrink-0"
+                    >
+                      {copiedDomain ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-700" />
+                          Copiado
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          Copiar
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <a
+                    href={`https://console.firebase.google.com/project/${encodeURIComponent(FIREBASE_PROJECT_ID)}/authentication/settings`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-white bg-zinc-950 hover:bg-blue-700 rounded-md transition-colors"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    Abrir Dominios autorizados en Firebase
+                  </a>
                 </div>
               )}
 
