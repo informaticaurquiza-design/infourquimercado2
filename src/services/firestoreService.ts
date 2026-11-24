@@ -715,6 +715,10 @@ export async function createOrUpdateDeliveryAgent(input: {
   const agentPath = `deliveryAgents/${agentId}`;
   const ref = doc(db, 'deliveryAgents', agentId);
   const nowIso = new Date().toISOString();
+  const ownerUid =
+    auth.currentUser?.uid && ID_PATTERN.test(auth.currentUser.uid)
+      ? clampString(auth.currentUser.uid, 128)
+      : undefined;
 
   const commonFields = {
     vehicleType: input.vehicleType,
@@ -730,11 +734,13 @@ export async function createOrUpdateDeliveryAgent(input: {
     } else {
       await setDoc(ref, {
         ...commonFields,
+        ...(ownerUid ? { ownerId: ownerUid } : {}),
         createdAt: serverTimestamp(),
       });
     }
     return {
       id: agentId,
+      ...(ownerUid && !input.id ? { ownerId: ownerUid } : {}),
       vehicleType: input.vehicleType,
       licensePlate,
       fullName,

@@ -123,6 +123,7 @@ export const DELIVERY_VEHICLE_OPTIONS: {
 
 export interface DeliveryAgent {
   id: string;
+  ownerId?: string;
   vehicleType: DeliveryVehicleType;
   licensePlate: string;
   fullName: string;

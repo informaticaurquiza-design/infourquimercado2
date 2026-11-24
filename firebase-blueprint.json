@@ -556,9 +556,15 @@
     },
     "DeliveryAgent": {
       "title": "DeliveryAgent",
-      "description": "Registered delivery vehicle and driver (moto, auto, or utilitario) managed by store administrators.",
+      "description": "Registered delivery vehicle and driver (moto, auto, or utilitario) owned and managed by each authenticated client or administrator.",
       "type": "object",
       "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the authenticated client or administrator who owns this delivery agent."
+        },
         "vehicleType": {
           "type": "string",
           "enum": ["moto", "auto", "utilitario"]
@@ -707,7 +713,7 @@
     },
     "/deliveryAgents/{agentId}": {
       "schema": { "$ref": "#/entities/DeliveryAgent" },
-      "description": "Fleet of delivery vehicles and drivers (moto, auto, utilitario) managed by admins for order dispatch."
+      "description": "Per-client delivery vehicles and drivers (moto, auto, utilitario) isolated by ownerId."
     },
     "/benefits/{benefitId}": {
       "schema": { "$ref": "#/entities/CustomerBenefit" },

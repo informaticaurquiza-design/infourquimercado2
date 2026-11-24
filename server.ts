@@ -953,7 +953,11 @@ app.get('/api/local/bootstrap', (req, res) => {
       : db.subscriptionPayments.filter((sp) => sp.userId === session.uid);
 
   const accounts = isAdmin ? db.users.map(toPublicProfile) : [];
-  const deliveryAgents = isAdmin ? [...db.deliveryAgents] : [];
+  const deliveryAgents = !session
+    ? []
+    : isAdmin
+      ? db.deliveryAgents.filter((a) => !a.ownerId || a.ownerId === session.uid)
+      : db.deliveryAgents.filter((a) => a.ownerId === session.uid);
   const benefits = isAdmin
     ? [...db.benefits]
     : session
@@ -1613,10 +1617,10 @@ function sanitizeAssignedCourier(raw: unknown): AssignedCourier | undefined {
   return { agentId, fullName, vehicleType, licensePlate };
 }
 
-// --- API: Delivery Agents (Medios de Envío) ABM (Admin Only) ---
+// --- API: Delivery Agents (Medios de Envío) ABM (Per-Client Ownership) ---
 
 app.post('/api/local/delivery-agents', async (req, res) => {
-  const session = requireAdmin(req, res);
+  const session = requireAuth(req, res);
   if (!session) return;
 
   const body = req.body ?? {};
@@ -1634,6 +1638,7 @@ app.post('/api/local/delivery-agents', async (req, res) => {
   const nowIso = new Date().toISOString();
   const created: DeliveryAgent = {
     id: safeId('drv'),
+    ownerId: session.uid,
     vehicleType,
     licensePlate,
     fullName,
@@ -1651,7 +1656,7 @@ app.post('/api/local/delivery-agents', async (req, res) => {
 });
 
 app.put('/api/local/delivery-agents/:id', async (req, res) => {
-  const session = requireAdmin(req, res);
+  const session = requireAuth(req, res);
   if (!session) return;
 
   const agentId = String(req.params.id || '').trim();
@@ -1671,8 +1676,13 @@ app.put('/api/local/delivery-agents/:id', async (req, res) => {
     const updated = await withDbWriteLock((db) => {
       const idx = db.deliveryAgents.findIndex((a) => a.id === agentId);
       if (idx === -1) throw new Error('NOT_FOUND');
+      const existing = db.deliveryAgents[idx];
+      if (session.role !== 'admin' && existing.ownerId !== session.uid) {
+        throw new Error('FORBIDDEN');
+      }
       const next: DeliveryAgent = {
-        ...db.deliveryAgents[idx],
+        ...existing,
+        ownerId: existing.ownerId,
         vehicleType,
         licensePlate,
         fullName,
@@ -1685,19 +1695,37 @@ app.put('/api/local/delivery-agents/:id', async (req, res) => {
 
     broadcastDbChange('deliveryAgents');
     res.json(updated);
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.message === 'FORBIDDEN') {
+      res.status(403).json({ error: 'Solo podés editar tus propios medios de envío.' });
+      return;
+    }
     res.status(404).json({ error: 'Medio de envío no encontrado.' });
   }
 });
 
 app.delete('/api/local/delivery-agents/:id', async (req, res) => {
-  const session = requireAdmin(req, res);
+  const session = requireAuth(req, res);
   if (!session) return;
 
   const agentId = String(req.params.id || '').trim();
-  await withDbWriteLock((db) => {
-    db.deliveryAgents = db.deliveryAgents.filter((a) => a.id !== agentId);
-  });
+  try {
+    await withDbWriteLock((db) => {
+      const target = db.deliveryAgents.find((a) => a.id === agentId);
+      if (!target) throw new Error('NOT_FOUND');
+      if (session.role !== 'admin' && target.ownerId !== session.uid) {
+        throw new Error('FORBIDDEN');
+      }
+      db.deliveryAgents = db.deliveryAgents.filter((a) => a.id !== agentId);
+    });
+  } catch (err) {
+    if (err instanceof Error && err.message === 'FORBIDDEN') {
+      res.status(403).json({ error: 'Solo podés eliminar tus propios medios de envío.' });
+      return;
+    }
+    res.status(404).json({ error: 'Medio de envío no encontrado.' });
+    return;
+  }
 
   broadcastDbChange('deliveryAgents');
   res.json({ ok: true });

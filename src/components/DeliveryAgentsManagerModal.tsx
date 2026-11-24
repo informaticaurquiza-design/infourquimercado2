@@ -10,12 +10,14 @@ import {
 } from '../services/dataService';
 import {
   DELIVERY_VEHICLE_OPTIONS,
+  type AppUser,
   type DeliveryAgent,
   type DeliveryVehicleType,
 } from '../types/ecommerce';
 
 interface DeliveryAgentsManagerModalProps {
   open: boolean;
+  user?: AppUser | null;
   agents: DeliveryAgent[];
   onClose: () => void;
   onNotifyToast: (msg: string) => void;
@@ -35,6 +37,7 @@ export function VehicleTypeIcon({
 
 export function DeliveryAgentsManagerModal({
   open,
+  user = null,
   agents,
   onClose,
   onNotifyToast,
@@ -156,8 +159,10 @@ export function DeliveryAgentsManagerModal({
               ABM de Medios de Envío
             </h2>
             <p className="text-xs text-zinc-500 mt-0.5">
-              Registrá motos, autos o utilitarios con su patente y conductor para asignarlos al
-              preparar pedidos.
+              Registrá tus motos, autos o utilitarios con patente y conductor
+              {user?.displayName || user?.email
+                ? ` — cuenta: ${user.displayName?.trim() || user.email}`
+                : ''}. Cada cuenta gestiona únicamente sus propios medios de envío.
             </p>
           </div>
           <button

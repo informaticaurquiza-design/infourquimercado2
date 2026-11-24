@@ -168,7 +168,8 @@ service cloud.firestore {
 
     function isValidDeliveryAgent(data) {
       return data.keys().hasAll(['vehicleType', 'licensePlate', 'fullName', 'active', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['vehicleType', 'licensePlate', 'fullName', 'active', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'vehicleType', 'licensePlate', 'fullName', 'active', 'createdAt', 'updatedAt'])
+        && (!('ownerId' in data) || isValidId(data.ownerId))
         && data.vehicleType is string && data.vehicleType in ['moto', 'auto', 'utilitario']
         && data.licensePlate is string && data.licensePlate.size() >= 4 && data.licensePlate.size() <= 16
         && data.licensePlate.matches('^[A-Z0-9 \\-]+$')
@@ -566,21 +567,43 @@ service cloud.firestore {
 
     // --- Collection: deliveryAgents ---
     match /deliveryAgents/{agentId} {
-      allow get: if isValidId(agentId) && isAdmin();
-      allow list: if isBootstrappedAdmin();
+      allow get: if isValidId(agentId) && isSignedIn() && (
+        ('ownerId' in existing() && existing().ownerId == request.auth.uid)
+        || isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        existing().ownerId == request.auth.uid
+        || isBootstrappedAdmin()
+      );
       allow create: if isValidId(agentId)
         && isVerifiedUser()
-        && isAdmin()
         && isValidDeliveryAgent(incoming())
         && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time;
+        && incoming().updatedAt == request.time
+        && (
+          ('ownerId' in incoming() && incoming().ownerId == request.auth.uid)
+          || isAdmin()
+        );
       allow update: if isValidId(agentId)
         && isVerifiedUser()
-        && isAdmin()
         && isValidDeliveryAgent(incoming())
         && incoming().createdAt == existing().createdAt
-        && incoming().updatedAt == request.time;
-      allow delete: if isValidId(agentId) && isVerifiedUser() && isAdmin();
+        && incoming().updatedAt == request.time
+        && (
+          (
+            'ownerId' in existing()
+            && existing().ownerId == request.auth.uid
+            && 'ownerId' in incoming()
+            && incoming().ownerId == existing().ownerId
+          )
+          || isAdmin()
+        );
+      allow delete: if isValidId(agentId)
+        && isVerifiedUser()
+        && (
+          ('ownerId' in existing() && existing().ownerId == request.auth.uid)
+          || isAdmin()
+        );
     }
 
     // --- Collection: benefits ---

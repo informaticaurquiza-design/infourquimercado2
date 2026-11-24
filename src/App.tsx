@@ -734,20 +734,25 @@ function AppContent() {
     return () => unsubscribe();
   }, [dbMode, cloudAuthReady, cloudIsAdmin]);
 
-  // 4e. Real-time Delivery Agents (Medios de Envío) Listener (Cloud Mode Admin only)
+  // 4e. Real-time Delivery Agents (Medios de Envío) Listener (Per-client ownership)
   useEffect(() => {
-    if (dbMode !== 'cloud' || !cloudAuthReady || !cloudIsAdmin) {
+    if (dbMode !== 'cloud' || !cloudAuthReady || !cloudUser) {
       setCloudDeliveryAgents([]);
       return;
     }
+    const agentsQuery = cloudIsAdmin
+      ? query(collection(db, 'deliveryAgents'))
+      : query(collection(db, 'deliveryAgents'), where('ownerId', '==', cloudUser.uid));
+
     const unsubscribe = onSnapshot(
-      query(collection(db, 'deliveryAgents')),
+      agentsQuery,
       (snapshot) => {
         const list = snapshot.docs
           .map((d) => ({
             id: d.id,
             ...(d.data() as Omit<DeliveryAgent, 'id'>),
           }))
+          .filter((a) => (cloudIsAdmin ? !a.ownerId || a.ownerId === cloudUser.uid : a.ownerId === cloudUser.uid))
           .sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt));
         setCloudDeliveryAgents(list);
       },
@@ -756,7 +761,7 @@ function AppContent() {
       },
     );
     return () => unsubscribe();
-  }, [dbMode, cloudAuthReady, cloudIsAdmin]);
+  }, [dbMode, cloudAuthReady, cloudIsAdmin, cloudUser]);
 
   // 4f. Real-time Benefits Listeners (Cloud Mode: full list for Admin; global + personal + owned for customers/guests)
   useEffect(() => {
@@ -1253,6 +1258,7 @@ function AppContent() {
       setLocalIsAdmin(false);
       setLocalOrders([]);
       setLocalAccounts([]);
+      setLocalDeliveryAgents([]);
       setLocalSubscriptionPayments([]);
       setLocalNotifications([]);
       await loadLocalData();

@@ -358,7 +358,7 @@ export function ShipmentTrackingView({
         </div>
 
         <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 w-full lg:w-auto">
-          {isAdmin && (
+          {user && (
             <button
               type="button"
               onClick={() => setAgentsModalOpen(true)}
@@ -1264,9 +1264,10 @@ export function ShipmentTrackingView({
         onClose={() => setShippingTicketOpen(false)}
       />
 
-      {isAdmin && (
+      {user && (
         <DeliveryAgentsManagerModal
           open={agentsModalOpen}
+          user={user}
           agents={deliveryAgents}
           onClose={() => setAgentsModalOpen(false)}
           onNotifyToast={onNotifyToast}
