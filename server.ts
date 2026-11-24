@@ -44,6 +44,7 @@ import {
   isValidImageSource,
 } from './src/lib/imageTools.ts';
 import {
+  ID_PATTERN,
   MONTHLY_SUBSCRIPTION_COST,
   clampString,
   formatCurrency,
@@ -1100,6 +1101,11 @@ app.post('/api/local/products', async (req, res) => {
         specs: cleanSpecs,
         featured: session.role === 'admin' ? Boolean(body.featured) : false,
         freeShipping: Boolean(body.freeShipping),
+        benefitId:
+          typeof body.benefitId === 'string' && ID_PATTERN.test(body.benefitId.trim())
+            ? clampString(body.benefitId.trim(), 128)
+            : '',
+        benefitEnabled: Boolean(body.benefitEnabled),
         active: Boolean(body.active),
         sellerId: sellerUid,
         sellerName,
@@ -1211,6 +1217,11 @@ app.put('/api/local/products/:id', async (req, res) => {
         specs: cleanSpecs,
         featured: session.role === 'admin' ? Boolean(body.featured) : existing.featured,
         freeShipping: Boolean(body.freeShipping),
+        benefitId:
+          typeof body.benefitId === 'string' && ID_PATTERN.test(body.benefitId.trim())
+            ? clampString(body.benefitId.trim(), 128)
+            : '',
+        benefitEnabled: Boolean(body.benefitEnabled),
         active: Boolean(body.active),
         sellerBankAlias: nextBankAlias || undefined,
         sellerBankCbuCvu: nextBankCbuCvu || undefined,
@@ -1711,6 +1722,7 @@ function normalizeBenefitBody(body: Record<string, unknown>, dbUsers: StoredLoca
   const minOrderAmount = Math.max(0, Math.round(Number(body.minOrderAmount ?? 0)));
   const maxInstallments =
     type === 'installments' ? Math.round(Number(body.maxInstallments ?? 3)) : 1;
+  const expiresAt = clampString(String(body.expiresAt || ''), 20);
   const active = body.active !== false;
 
   const errMsg = validateBenefitInput({
@@ -1723,6 +1735,7 @@ function normalizeBenefitBody(body: Record<string, unknown>, dbUsers: StoredLoca
     discountPercent,
     minOrderAmount,
     maxInstallments,
+    expiresAt,
   });
 
   return {
@@ -1737,6 +1750,7 @@ function normalizeBenefitBody(body: Record<string, unknown>, dbUsers: StoredLoca
       discountPercent,
       minOrderAmount,
       maxInstallments,
+      expiresAt,
       active,
     },
   };

@@ -1346,6 +1346,11 @@ function AppContent() {
             shippingSettings={activeShippingSettings}
             benefits={activeBenefits}
             user={activeUser}
+            activePromoCode={promoCode}
+            onApplyPromoCode={(code) => {
+              setPromoCode(code);
+              showToast(`Código ${code} aplicado a tu carrito.`);
+            }}
             selectedCategory={selectedCategory}
             onSelectCategory={setSelectedCategory}
             onAddToCart={handleAddToCart}
@@ -1405,6 +1410,7 @@ function AppContent() {
             products={activeProducts}
             orders={activeOrders}
             accounts={activeAccounts}
+            benefits={activeBenefits}
             subscriptionPayments={activeSubscriptionPayments}
             shippingSettings={activeShippingSettings}
             onRequireSignIn={() => setAccountOpen(true)}

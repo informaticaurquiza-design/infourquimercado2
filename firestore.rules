@@ -78,7 +78,8 @@ service cloud.firestore {
       && data.keys().hasOnly([
         'sku', 'name', 'category', 'categoryLabel', 'description',
         'price', 'compareAtPrice', 'stock', 'minStockThreshold', 'soldCount',
-        'imageUrl', 'images', 'specs', 'featured', 'freeShipping', 'active',
+        'imageUrl', 'images', 'specs', 'featured', 'freeShipping',
+        'benefitId', 'benefitEnabled', 'active',
         'sellerId', 'sellerName', 'sellerBankAlias', 'sellerBankCbuCvu',
         'sellerBankAccountHolder', 'createdAt', 'updatedAt'
       ])
@@ -106,6 +107,8 @@ service cloud.firestore {
       && (data.specs.size() == 0 || (data.specs[0] is string && data.specs[0].size() <= 120))
       && data.featured is bool
       && (!('freeShipping' in data) || data.freeShipping is bool)
+      && (!('benefitId' in data) || (data.benefitId is string && (data.benefitId == '' || isValidId(data.benefitId))))
+      && (!('benefitEnabled' in data) || data.benefitEnabled is bool)
       && data.active is bool
       && (!('sellerId' in data) || isValidId(data.sellerId))
       && (!('sellerName' in data) || (data.sellerName is string && data.sellerName.size() <= 120))
@@ -184,7 +187,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'title', 'description', 'type', 'targetUserId', 'targetUserName',
           'promoCode', 'discountPercent', 'minOrderAmount', 'maxInstallments',
-          'active', 'createdAt', 'updatedAt'
+          'expiresAt', 'active', 'createdAt', 'updatedAt'
         ])
         && data.title is string && data.title.size() >= 2 && data.title.size() <= 100
         && data.description is string && data.description.size() <= 240
@@ -199,6 +202,7 @@ service cloud.firestore {
         && (data.type != 'min_amount_discount' || data.minOrderAmount > 0)
         && data.maxInstallments is int && data.maxInstallments >= 1 && data.maxInstallments <= 12
         && (data.type != 'installments' || data.maxInstallments >= 2)
+        && (!('expiresAt' in data) || (data.expiresAt is string && data.expiresAt.size() <= 20 && (data.expiresAt == '' || data.expiresAt.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))))
         && data.active is bool
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;

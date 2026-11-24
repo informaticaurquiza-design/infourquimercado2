@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import {
   Bell,
   BellRing,
+  Calendar,
   Check,
   CheckCheck,
   Copy,
@@ -19,7 +20,13 @@ import {
   Users,
 } from 'lucide-react';
 import { sendBrowserPush, type PushPermissionState } from '../lib/pushNotifications';
-import { formatCurrency, formatDateTime, getBenefitTypeLabel } from '../lib/validation';
+import {
+  formatCurrency,
+  formatDateTime,
+  formatExpirationDate,
+  getBenefitTypeLabel,
+  isBenefitExpired,
+} from '../lib/validation';
 import {
   createOrUpdateBenefit,
   deleteBenefitById,
@@ -76,22 +83,24 @@ export function NotificationsView({
 
   const visibleCustomerBenefits = useMemo(() => {
     if (isAdmin) return benefits;
+    const now = new Date();
     return benefits.filter(
       (b) =>
         b.active &&
+        !isBenefitExpired(b, now) &&
         (b.targetUserId === 'all' || (Boolean(user) && b.targetUserId === user?.uid)),
     );
   }, [benefits, isAdmin, user]);
 
-  const activeBenefitsCount = useMemo(
-    () =>
-      benefits.filter(
-        (b) =>
-          b.active &&
-          (isAdmin || b.targetUserId === 'all' || (Boolean(user) && b.targetUserId === user?.uid)),
-      ).length,
-    [benefits, isAdmin, user],
-  );
+  const activeBenefitsCount = useMemo(() => {
+    const now = new Date();
+    return benefits.filter(
+      (b) =>
+        b.active &&
+        !isBenefitExpired(b, now) &&
+        (isAdmin || b.targetUserId === 'all' || (Boolean(user) && b.targetUserId === user?.uid)),
+    ).length;
+  }, [benefits, isAdmin, user]);
 
   async function handleMarkAllRead() {
     if (!user || unreadMine.length === 0) return;
@@ -142,6 +151,7 @@ export function NotificationsView({
         discountPercent: benefit.discountPercent,
         minOrderAmount: benefit.minOrderAmount,
         maxInstallments: benefit.maxInstallments,
+        expiresAt: benefit.expiresAt || '',
         active: !benefit.active,
       });
       onNotifyToast(!benefit.active ? 'Beneficio activado.' : 'Beneficio pausado.');
@@ -323,6 +333,12 @@ export function NotificationsView({
                     {benefit.description && (
                       <p className="text-xs text-zinc-600 mt-1">{benefit.description}</p>
                     )}
+                    {formatExpirationDate(benefit.expiresAt) && (
+                      <p className="inline-flex items-center gap-1 text-[11px] font-mono text-zinc-500 mt-1.5">
+                        <Calendar className="w-3 h-3" />
+                        Válido hasta {formatExpirationDate(benefit.expiresAt)}
+                      </p>
+                    )}
                     {benefit.type === 'promo_code' && benefit.promoCode && (
                       <div className="mt-3 flex items-center gap-2">
                         <span className="px-2 py-0.5 text-xs font-mono font-semibold bg-amber-50 border border-amber-200 rounded text-amber-900">
@@ -471,6 +487,8 @@ export function NotificationsView({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {visibleCustomerBenefits.map((benefit) => {
                     const isPersonal = benefit.targetUserId !== 'all';
+                    const expired = isBenefitExpired(benefit);
+                    const formattedExpiry = formatExpirationDate(benefit.expiresAt);
                     const isCodeApplied =
                       benefit.type === 'promo_code' &&
                       Boolean(benefit.promoCode) &&
@@ -481,7 +499,7 @@ export function NotificationsView({
                       <div
                         key={benefit.id}
                         className={`p-4 border rounded-xl flex flex-col justify-between gap-3 ${
-                          benefit.active
+                          benefit.active && !expired
                             ? 'border-zinc-200 bg-zinc-50/60'
                             : 'border-zinc-200 bg-zinc-100/70 opacity-75'
                         }`}
@@ -544,6 +562,19 @@ export function NotificationsView({
                               )}
                           </div>
 
+                          {formattedExpiry && (
+                            <p
+                              className={`mt-2 inline-flex items-center gap-1 text-[11px] font-mono ${
+                                expired ? 'text-red-600 font-semibold' : 'text-zinc-500'
+                              }`}
+                            >
+                              <Calendar className="w-3 h-3" />
+                              {expired
+                                ? `Vencido el ${formattedExpiry}`
+                                : `Válido hasta el ${formattedExpiry}`}
+                            </p>
+                          )}
+
                           {benefit.description && (
                             <p className="text-xs text-zinc-600 mt-2 leading-relaxed">
                               {benefit.description}
@@ -554,44 +585,53 @@ export function NotificationsView({
                         <div className="pt-2.5 border-t border-zinc-200 flex flex-wrap items-center justify-between gap-2">
                           {/* Customer quick actions */}
                           <div className="flex items-center gap-2">
-                            {benefit.type === 'promo_code' && benefit.promoCode && benefit.active && (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => onApplyPromoCode(benefit.promoCode)}
-                                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
-                                    isCodeApplied
-                                      ? 'bg-emerald-700 text-white'
-                                      : 'bg-zinc-950 text-white hover:bg-blue-700'
-                                  }`}
-                                >
-                                  {isCodeApplied ? 'Aplicado en carrito' : 'Aplicar al carrito'}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCopyPromoCode(benefit.promoCode)}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-zinc-700 bg-white border border-zinc-300 hover:border-zinc-950 rounded-lg cursor-pointer"
-                                >
-                                  <Copy className="w-3 h-3" />
-                                  {copiedCode === benefit.promoCode ? 'Copiado' : 'Copiar'}
-                                </button>
-                              </>
-                            )}
-                            {benefit.type === 'min_amount_discount' && benefit.active && (
-                              <span className="text-[11px] font-medium text-emerald-700">
-                                Se aplica automáticamente al comprar
-                              </span>
-                            )}
-                            {benefit.type === 'installments' && benefit.active && (
+                            {benefit.type === 'promo_code' &&
+                              benefit.promoCode &&
+                              benefit.active &&
+                              !expired && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => onApplyPromoCode(benefit.promoCode)}
+                                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                                      isCodeApplied
+                                        ? 'bg-emerald-700 text-white'
+                                        : 'bg-zinc-950 text-white hover:bg-blue-700'
+                                    }`}
+                                  >
+                                    {isCodeApplied ? 'Aplicado en carrito' : 'Aplicar al carrito'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopyPromoCode(benefit.promoCode)}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-zinc-700 bg-white border border-zinc-300 hover:border-zinc-950 rounded-lg cursor-pointer"
+                                  >
+                                    <Copy className="w-3 h-3" />
+                                    {copiedCode === benefit.promoCode ? 'Copiado' : 'Copiar'}
+                                  </button>
+                                </>
+                              )}
+                            {benefit.type === 'min_amount_discount' &&
+                              benefit.active &&
+                              !expired && (
+                                <span className="text-[11px] font-medium text-emerald-700">
+                                  Se aplica automáticamente al comprar
+                                </span>
+                              )}
+                            {benefit.type === 'installments' && benefit.active && !expired && (
                               <span className="text-[11px] font-medium text-blue-700">
                                 Disponible en la pasarela de pagos
                               </span>
                             )}
-                            {!benefit.active && (
+                            {expired ? (
+                              <span className="text-[11px] font-semibold text-red-600">
+                                Vencido
+                              </span>
+                            ) : !benefit.active ? (
                               <span className="text-[11px] font-semibold text-zinc-500">
                                 Pausado
                               </span>
-                            )}
+                            ) : null}
                           </div>
 
                           {/* Admin quick ABM actions */}

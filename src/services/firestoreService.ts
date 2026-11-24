@@ -441,6 +441,8 @@ export async function createOrUpdateProduct(
     specs: string[];
     featured: boolean;
     freeShipping?: boolean;
+    benefitId?: string;
+    benefitEnabled?: boolean;
     active: boolean;
     sellerId?: string;
     sellerName?: string;
@@ -502,6 +504,12 @@ export async function createOrUpdateProduct(
     specs: cleanSpecs,
     featured: Boolean(productInput.featured),
     freeShipping: Boolean(productInput.freeShipping),
+    benefitId:
+      typeof productInput.benefitId === 'string' &&
+      ID_PATTERN.test(productInput.benefitId.trim())
+        ? clampString(productInput.benefitId.trim(), 128)
+        : '',
+    benefitEnabled: Boolean(productInput.benefitEnabled),
     active: Boolean(productInput.active),
     updatedAt: serverTimestamp(),
   };
@@ -756,6 +764,7 @@ export async function createOrUpdateBenefit(input: {
   discountPercent: number;
   minOrderAmount: number;
   maxInstallments: number;
+  expiresAt?: string;
   active: boolean;
 }): Promise<CustomerBenefit> {
   const title = clampString(input.title, 100);
@@ -772,6 +781,7 @@ export async function createOrUpdateBenefit(input: {
   const minOrderAmount = Math.max(0, Math.round(Number(input.minOrderAmount || 0)));
   const maxInstallments =
     input.type === 'installments' ? Math.round(Number(input.maxInstallments || 3)) : 1;
+  const expiresAt = clampString(input.expiresAt || '', 20);
 
   const errMsg = validateBenefitInput({
     title,
@@ -783,6 +793,7 @@ export async function createOrUpdateBenefit(input: {
     discountPercent,
     minOrderAmount,
     maxInstallments,
+    expiresAt,
   });
   if (errMsg) {
     throw new Error(errMsg);
@@ -803,6 +814,7 @@ export async function createOrUpdateBenefit(input: {
     discountPercent,
     minOrderAmount,
     maxInstallments,
+    expiresAt,
     active: Boolean(input.active),
     updatedAt: serverTimestamp(),
   };
@@ -827,6 +839,7 @@ export async function createOrUpdateBenefit(input: {
       discountPercent,
       minOrderAmount,
       maxInstallments,
+      expiresAt,
       active: Boolean(input.active),
       updatedAt: nowIso,
     };

@@ -79,6 +79,8 @@ export interface Product {
   specs: string[];
   featured: boolean;
   freeShipping?: boolean;
+  benefitId?: string;
+  benefitEnabled?: boolean;
   active: boolean;
   sellerId?: string;
   sellerName?: string;
@@ -171,6 +173,7 @@ export interface CustomerBenefit {
   discountPercent: number;
   minOrderAmount: number;
   maxInstallments: number;
+  expiresAt?: string;
   active: boolean;
   createdAt?: Timestamp | string;
   updatedAt?: Timestamp | string;

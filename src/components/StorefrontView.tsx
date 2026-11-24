@@ -2,19 +2,30 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownRight,
   ArrowUpDown,
+  Calendar,
   Check,
   ChevronLeft,
   ChevronRight,
+  CreditCard,
   Minus,
+  Percent,
   Plus,
   Search,
   SlidersHorizontal,
+  Tag,
   X,
 } from 'lucide-react';
 import { ASSET_IMAGES } from '../lib/categoryAssets';
 import { getProductGallery } from '../lib/imageTools';
 import type { PushPermissionState } from '../lib/pushNotifications';
-import { evaluateOrderBenefits, formatCurrency } from '../lib/validation';
+import {
+  evaluateOrderBenefits,
+  formatBenefitSummary,
+  formatCurrency,
+  formatExpirationDate,
+  getBenefitTypeLabel,
+  getProductActiveBenefit,
+} from '../lib/validation';
 import {
   CATEGORY_MAP,
   type AppUser,
@@ -32,6 +43,8 @@ interface StorefrontViewProps {
   shippingSettings: StoreSettings;
   benefits: CustomerBenefit[];
   user: AppUser | null;
+  activePromoCode?: string;
+  onApplyPromoCode?: (code: string) => void;
   selectedCategory: CategoryId | 'all';
   onSelectCategory: (cat: CategoryId | 'all') => void;
   onAddToCart: (product: Product, qty?: number) => void;
@@ -50,6 +63,8 @@ export function StorefrontView({
   shippingSettings,
   benefits,
   user,
+  activePromoCode = '',
+  onApplyPromoCode,
   selectedCategory,
   onSelectCategory,
   onAddToCart,
@@ -483,6 +498,10 @@ export function StorefrontView({
                 const isLowStock = !isOutOfStock && product.stock <= product.minStockThreshold;
                 const isAdded = recentlyAdded?.id === product.id;
                 const photoCount = getProductGallery(product).length;
+                const productBenefit = getProductActiveBenefit(product, benefits, user?.uid);
+                const productBenefitExpiry = productBenefit
+                  ? formatExpirationDate(productBenefit.expiresAt)
+                  : '';
 
                 return (
                   <article
@@ -531,6 +550,38 @@ export function StorefrontView({
                         <p className="text-xs text-zinc-500 mt-2 line-clamp-2 leading-relaxed">
                           {product.description}
                         </p>
+
+                        {productBenefit && (
+                          <div
+                            className={`mt-3 px-2.5 py-2 rounded-lg border text-[11px] leading-snug ${
+                              productBenefit.type === 'installments'
+                                ? 'bg-blue-50/80 border-blue-200 text-blue-900'
+                                : productBenefit.type === 'promo_code'
+                                  ? 'bg-amber-50/80 border-amber-200 text-amber-950'
+                                  : 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
+                            }`}
+                          >
+                            <div className="flex items-center gap-1.5 font-semibold">
+                              {productBenefit.type === 'installments' ? (
+                                <CreditCard className="w-3.5 h-3.5 text-blue-700 shrink-0" />
+                              ) : productBenefit.type === 'promo_code' ? (
+                                <Tag className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                              ) : (
+                                <Percent className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                              )}
+                              <span>{getBenefitTypeLabel(productBenefit.type)}</span>
+                            </div>
+                            <p className="mt-0.5 font-mono font-medium">
+                              {formatBenefitSummary(productBenefit)}
+                            </p>
+                            {productBenefitExpiry && (
+                              <p className="mt-0.5 inline-flex items-center gap-1 text-[10px] opacity-80 font-mono">
+                                <Calendar className="w-3 h-3 shrink-0" />
+                                Válido hasta {productBenefitExpiry}
+                              </p>
+                            )}
+                          </div>
+                        )}
                       </div>
 
                       <div className="pt-5 mt-4 border-t border-zinc-100">
@@ -741,18 +792,96 @@ export function StorefrontView({
                       )}
                   </div>
 
-                  <p className="text-xs text-zinc-600 mb-5">
-                    Hasta {heroInstallments} cuotas sin interés de{' '}
-                    <span className="font-mono font-medium text-zinc-900 tabular-nums">
-                      {formatCurrency(liveSelectedProduct.price / heroInstallments)}
-                    </span>
-                    {qualifiesForFreeShipping(liveSelectedProduct) && (
-                      <span className="text-emerald-700 font-medium">
-                        {' '}
-                        · Envío gratis incluido
-                      </span>
-                    )}
-                  </p>
+                  {(() => {
+                    const detailBenefit = getProductActiveBenefit(
+                      liveSelectedProduct,
+                      benefits,
+                      user?.uid,
+                    );
+                    const detailInstallments =
+                      detailBenefit && detailBenefit.type === 'installments'
+                        ? detailBenefit.maxInstallments
+                        : heroInstallments;
+                    const detailBenefitExpiry = detailBenefit
+                      ? formatExpirationDate(detailBenefit.expiresAt)
+                      : '';
+                    const isCodeApplied =
+                      detailBenefit?.type === 'promo_code' &&
+                      Boolean(detailBenefit.promoCode) &&
+                      activePromoCode.trim().toUpperCase() ===
+                        detailBenefit.promoCode.trim().toUpperCase();
+
+                    return (
+                      <>
+                        <p className="text-xs text-zinc-600 mb-4">
+                          Hasta {detailInstallments} cuotas sin interés de{' '}
+                          <span className="font-mono font-medium text-zinc-900 tabular-nums">
+                            {formatCurrency(liveSelectedProduct.price / detailInstallments)}
+                          </span>
+                          {qualifiesForFreeShipping(liveSelectedProduct) && (
+                            <span className="text-emerald-700 font-medium">
+                              {' '}
+                              · Envío gratis incluido
+                            </span>
+                          )}
+                        </p>
+
+                        {detailBenefit && (
+                          <div
+                            className={`mb-5 p-3.5 rounded-xl border space-y-1.5 ${
+                              detailBenefit.type === 'installments'
+                                ? 'bg-blue-50/80 border-blue-200 text-blue-950'
+                                : detailBenefit.type === 'promo_code'
+                                  ? 'bg-amber-50/80 border-amber-200 text-amber-950'
+                                  : 'bg-emerald-50/80 border-emerald-200 text-emerald-950'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="inline-flex items-center gap-1.5 text-xs font-semibold">
+                                {detailBenefit.type === 'installments' ? (
+                                  <CreditCard className="w-4 h-4 text-blue-700 shrink-0" />
+                                ) : detailBenefit.type === 'promo_code' ? (
+                                  <Tag className="w-4 h-4 text-amber-700 shrink-0" />
+                                ) : (
+                                  <Percent className="w-4 h-4 text-emerald-700 shrink-0" />
+                                )}
+                                {getBenefitTypeLabel(detailBenefit.type)} habilitado
+                              </span>
+                              {detailBenefitExpiry && (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-mono opacity-80">
+                                  <Calendar className="w-3 h-3" />
+                                  Vence {detailBenefitExpiry}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs font-mono font-semibold">
+                              {formatBenefitSummary(detailBenefit)}
+                            </p>
+                            {detailBenefit.description && (
+                              <p className="text-xs opacity-85">{detailBenefit.description}</p>
+                            )}
+                            {detailBenefit.type === 'promo_code' &&
+                              detailBenefit.promoCode &&
+                              onApplyPromoCode && (
+                                <button
+                                  type="button"
+                                  onClick={() => onApplyPromoCode(detailBenefit.promoCode)}
+                                  className={`mt-1 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                                    isCodeApplied
+                                      ? 'bg-emerald-700 text-white'
+                                      : 'bg-zinc-950 text-white hover:bg-blue-700'
+                                  }`}
+                                >
+                                  {isCodeApplied
+                                    ? `Código ${detailBenefit.promoCode} aplicado`
+                                    : `Aplicar código ${detailBenefit.promoCode}`}
+                                </button>
+                              )}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
 
                   <p className="text-sm text-zinc-600 leading-relaxed mb-6">
                     {liveSelectedProduct.description}

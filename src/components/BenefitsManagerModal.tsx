@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  Calendar,
   CreditCard,
   Edit3,
   Gift,
@@ -13,7 +14,9 @@ import {
 } from 'lucide-react';
 import {
   formatCurrency,
+  formatExpirationDate,
   getBenefitTypeLabel,
+  isBenefitExpired,
   validateBenefitInput,
 } from '../lib/validation';
 import { createOrUpdateBenefit, deleteBenefitById } from '../services/dataService';
@@ -52,6 +55,7 @@ export function BenefitsManagerModal({
   const [discountPercent, setDiscountPercent] = useState('10');
   const [minOrderAmount, setMinOrderAmount] = useState('0');
   const [maxInstallments, setMaxInstallments] = useState('6');
+  const [expiresAt, setExpiresAt] = useState('');
   const [active, setActive] = useState(true);
 
   const [filterScope, setFilterScope] = useState<'all' | 'global' | 'personal'>('all');
@@ -76,6 +80,7 @@ export function BenefitsManagerModal({
     setDiscountPercent('10');
     setMinOrderAmount('0');
     setMaxInstallments('6');
+    setExpiresAt('');
     setActive(true);
     setErrorMessage('');
   }
@@ -90,6 +95,7 @@ export function BenefitsManagerModal({
     setDiscountPercent(String(benefit.discountPercent || 10));
     setMinOrderAmount(String(benefit.minOrderAmount || 0));
     setMaxInstallments(String(benefit.maxInstallments || 6));
+    setExpiresAt(benefit.expiresAt || '');
     setActive(benefit.active);
     setErrorMessage('');
   }
@@ -157,6 +163,7 @@ export function BenefitsManagerModal({
       discountPercent: parsedDiscount,
       minOrderAmount: parsedMinAmount,
       maxInstallments: parsedInstallments,
+      expiresAt: expiresAt.trim(),
     });
     if (validationErr) {
       setErrorMessage(validationErr);
@@ -176,6 +183,7 @@ export function BenefitsManagerModal({
         discountPercent: parsedDiscount,
         minOrderAmount: parsedMinAmount,
         maxInstallments: parsedInstallments,
+        expiresAt: expiresAt.trim(),
         active,
       });
       onNotifyToast(
@@ -207,6 +215,7 @@ export function BenefitsManagerModal({
         discountPercent: benefit.discountPercent,
         minOrderAmount: benefit.minOrderAmount,
         maxInstallments: benefit.maxInstallments,
+        expiresAt: benefit.expiresAt || '',
         active: !benefit.active,
       });
       onNotifyToast(
@@ -567,6 +576,33 @@ export function BenefitsManagerModal({
               />
             </div>
 
+            <div>
+              <label
+                htmlFor="benefit-expires-at"
+                className="block text-xs font-medium text-zinc-700 mb-1"
+              >
+                Fecha de vencimiento (opcional — vacío = sin vencimiento)
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="benefit-expires-at"
+                  type="date"
+                  value={expiresAt}
+                  onChange={(e) => setExpiresAt(e.target.value)}
+                  className="flex-1 px-3 py-2 text-xs font-mono bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                />
+                {expiresAt && (
+                  <button
+                    type="button"
+                    onClick={() => setExpiresAt('')}
+                    className="px-2.5 py-2 text-xs text-zinc-600 hover:text-zinc-950 border border-zinc-300 rounded-lg cursor-pointer"
+                  >
+                    Quitar
+                  </button>
+                )}
+              </div>
+            </div>
+
             <label className="inline-flex items-center gap-2 text-xs text-zinc-800 cursor-pointer">
               <input
                 type="checkbox"
@@ -649,6 +685,8 @@ export function BenefitsManagerModal({
               <ul className="space-y-3">
                 {filteredBenefits.map((benefit) => {
                   const isPersonal = benefit.targetUserId !== 'all';
+                  const expired = isBenefitExpired(benefit);
+                  const formattedExpiry = formatExpirationDate(benefit.expiresAt);
                   return (
                     <li
                       key={benefit.id}
@@ -681,10 +719,14 @@ export function BenefitsManagerModal({
                             <span className="text-zinc-300">·</span>
                             <span
                               className={`text-[11px] font-semibold ${
-                                benefit.active ? 'text-emerald-700' : 'text-zinc-400'
+                                expired
+                                  ? 'text-red-600'
+                                  : benefit.active
+                                    ? 'text-emerald-700'
+                                    : 'text-zinc-400'
                               }`}
                             >
-                              {benefit.active ? 'Activo' : 'Pausado'}
+                              {expired ? 'Vencido' : benefit.active ? 'Activo' : 'Pausado'}
                             </span>
                           </div>
 
@@ -722,6 +764,18 @@ export function BenefitsManagerModal({
                                   Mín. {formatCurrency(benefit.minOrderAmount)}
                                 </span>
                               )}
+                            {formattedExpiry && (
+                              <span
+                                className={`inline-flex items-center gap-1 ${
+                                  expired ? 'text-red-600 font-semibold' : 'text-zinc-600'
+                                }`}
+                              >
+                                <Calendar className="w-3 h-3" />
+                                {expired
+                                  ? `Venció el ${formattedExpiry}`
+                                  : `Vence ${formattedExpiry}`}
+                              </span>
+                            )}
                           </div>
 
                           {benefit.description && (

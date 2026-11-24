@@ -213,6 +213,8 @@ export async function createOrUpdateProduct(productInput: {
   specs: string[];
   featured: boolean;
   freeShipping?: boolean;
+  benefitId?: string;
+  benefitEnabled?: boolean;
   active: boolean;
   sellerId?: string;
   sellerName?: string;
@@ -303,6 +305,7 @@ export async function createOrUpdateBenefit(input: {
   discountPercent: number;
   minOrderAmount: number;
   maxInstallments: number;
+  expiresAt?: string;
   active: boolean;
 }): Promise<CustomerBenefit> {
   if (currentDbMode === 'local') {

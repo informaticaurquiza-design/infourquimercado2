@@ -63,6 +63,16 @@
         "freeShipping": {
           "type": "boolean"
         },
+        "benefitId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^$|^[a-zA-Z0-9_\\-]+$",
+          "description": "Optional linked benefit ID from /benefits assigned to this product."
+        },
+        "benefitEnabled": {
+          "type": "boolean",
+          "description": "Whether the linked discount/benefit is enabled and displayed on this product in the catalog."
+        },
         "active": {
           "type": "boolean"
         },
@@ -625,6 +635,12 @@
         },
         "maxInstallments": {
           "type": "integer"
+        },
+        "expiresAt": {
+          "type": "string",
+          "maxLength": 20,
+          "pattern": "^$|^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Optional benefit expiration date in YYYY-MM-DD format (empty string means no expiration)."
         },
         "active": {
           "type": "boolean"

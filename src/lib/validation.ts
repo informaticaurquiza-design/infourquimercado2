@@ -3,6 +3,7 @@ import type {
   CategoryId,
   CustomerBenefit,
   DeliveryVehicleType,
+  Product,
   ShipmentStatus,
   UserProfile,
 } from '../types/ecommerce';
@@ -14,6 +15,7 @@ export const ORDER_NUMBER_PATTERN = /^ALB-[0-9]{4}-[0-9]{4}$/;
 export const TRACKING_CODE_PATTERN = /^TRK-[A-Z0-9]{8}$/;
 export const LICENSE_PLATE_PATTERN = /^[A-Z0-9 -]{4,16}$/;
 export const PROMO_CODE_PATTERN = /^[A-Z0-9_-]{3,24}$/;
+export const DATE_ONLY_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 
 export const FREE_SHIPPING_THRESHOLD = 150000;
 export const STANDARD_SHIPPING_COST = 8500;
@@ -254,6 +256,63 @@ export function getBenefitTypeLabel(type: BenefitType): string {
   }
 }
 
+export function isBenefitExpired(
+  benefit: Pick<CustomerBenefit, 'expiresAt'>,
+  now: Date = new Date(),
+): boolean {
+  const raw = (benefit.expiresAt || '').trim();
+  if (!raw || !DATE_ONLY_PATTERN.test(raw)) return false;
+  const [y, m, d] = raw.split('-').map(Number);
+  if (!y || !m || !d) return false;
+  const endOfDay = new Date(y, m - 1, d, 23, 59, 59, 999);
+  if (Number.isNaN(endOfDay.getTime())) return false;
+  return now.getTime() > endOfDay.getTime();
+}
+
+export function formatExpirationDate(expiresAt?: string): string {
+  const raw = (expiresAt || '').trim();
+  if (!raw || !DATE_ONLY_PATTERN.test(raw)) return '';
+  const [y, m, d] = raw.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  if (Number.isNaN(date.getTime())) return raw;
+  return new Intl.DateTimeFormat('es-AR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(date);
+}
+
+export function formatBenefitSummary(benefit: CustomerBenefit): string {
+  if (benefit.type === 'installments') {
+    const base = `Hasta ${benefit.maxInstallments} cuotas sin interés`;
+    return benefit.minOrderAmount > 0
+      ? `${base} (mín. ${formatCurrency(benefit.minOrderAmount)})`
+      : base;
+  }
+  if (benefit.type === 'promo_code') {
+    const base = `${benefit.discountPercent}% OFF · Código ${benefit.promoCode}`;
+    return benefit.minOrderAmount > 0
+      ? `${base} (mín. ${formatCurrency(benefit.minOrderAmount)})`
+      : base;
+  }
+  return `${benefit.discountPercent}% OFF en compras ≥ ${formatCurrency(benefit.minOrderAmount)}`;
+}
+
+export function getProductActiveBenefit(
+  product: Pick<Product, 'benefitId' | 'benefitEnabled'>,
+  benefits: CustomerBenefit[],
+  userId?: string | null,
+  now: Date = new Date(),
+): CustomerBenefit | null {
+  if (!product.benefitEnabled || !product.benefitId) return null;
+  const found = benefits.find((b) => b.id === product.benefitId);
+  if (!found || !found.active || isBenefitExpired(found, now)) return null;
+  if (found.targetUserId !== 'all' && (!userId || found.targetUserId !== userId)) {
+    return null;
+  }
+  return found;
+}
+
 export function validateBenefitInput(input: {
   title: string;
   description: string;
@@ -264,6 +323,7 @@ export function validateBenefitInput(input: {
   discountPercent: number;
   minOrderAmount: number;
   maxInstallments: number;
+  expiresAt?: string;
 }): string | null {
   const title = input.title.trim();
   if (title.length < 2 || title.length > 100) {
@@ -288,6 +348,22 @@ export function validateBenefitInput(input: {
     input.minOrderAmount > 500000000
   ) {
     return 'El monto mínimo debe ser un número mayor o igual a 0.';
+  }
+  const expiresAt = (input.expiresAt || '').trim();
+  if (expiresAt) {
+    if (!DATE_ONLY_PATTERN.test(expiresAt)) {
+      return 'La fecha de vencimiento debe tener formato válido (AAAA-MM-DD).';
+    }
+    const [y, m, d] = expiresAt.split('-').map(Number);
+    const parsed = new Date(y, m - 1, d);
+    if (
+      Number.isNaN(parsed.getTime()) ||
+      parsed.getFullYear() !== y ||
+      parsed.getMonth() !== m - 1 ||
+      parsed.getDate() !== d
+    ) {
+      return 'Ingresá una fecha de vencimiento válida.';
+    }
   }
 
   if (input.type === 'installments') {
@@ -361,9 +437,13 @@ export function evaluateOrderBenefits(params: {
   const subtotal = Math.max(0, Math.round(params.subtotal));
   const normalizedCode = params.promoCode.trim().toUpperCase();
   const userId = params.userId || null;
+  const now = new Date();
 
   const applicableBenefits = params.benefits.filter(
-    (b) => b.active && (b.targetUserId === 'all' || (Boolean(userId) && b.targetUserId === userId)),
+    (b) =>
+      b.active &&
+      !isBenefitExpired(b, now) &&
+      (b.targetUserId === 'all' || (Boolean(userId) && b.targetUserId === userId)),
   );
 
   // 1. Promo code matching

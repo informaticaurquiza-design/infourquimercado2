@@ -44,12 +44,16 @@ import {
   FREE_SHIPPING_THRESHOLD,
   SELLER_TRIAL_NOTICE,
   STANDARD_SHIPPING_COST,
+  formatBenefitSummary,
   formatCurrency,
   formatDateTime,
+  formatExpirationDate,
   formatShortDate,
   getAccountSubscriptionInfo,
+  getBenefitTypeLabel,
   getNextShipmentStatus,
   getShipmentStatusMeta,
+  isBenefitExpired,
 } from '../lib/validation';
 import {
   adjustProductStock,
@@ -66,6 +70,7 @@ import {
   type AdminTab,
   type AppUser,
   type CategoryId,
+  type CustomerBenefit,
   type DatabaseMode,
   type LocalServerInfo,
   type NotificationType,
@@ -97,6 +102,7 @@ interface AdminDashboardViewProps {
   products: Product[];
   orders: Order[];
   accounts: UserProfile[];
+  benefits: CustomerBenefit[];
   subscriptionPayments: SubscriptionPayment[];
   shippingSettings: StoreSettings;
   onRequireSignIn: () => void;
@@ -151,6 +157,7 @@ export function AdminDashboardView({
   products,
   orders,
   accounts,
+  benefits,
   subscriptionPayments,
   shippingSettings,
   onRequireSignIn,
@@ -286,6 +293,8 @@ export function AdminDashboardView({
   const [formImages, setFormImages] = useState<string[]>([]);
   const [formFeatured, setFormFeatured] = useState(false);
   const [formFreeShipping, setFormFreeShipping] = useState(false);
+  const [formBenefitId, setFormBenefitId] = useState('');
+  const [formBenefitEnabled, setFormBenefitEnabled] = useState(false);
   const [formActive, setFormActive] = useState(true);
   const [formError, setFormError] = useState('');
   const [savingProduct, setSavingProduct] = useState(false);
@@ -563,6 +572,8 @@ export function AdminDashboardView({
     setFormImages([]);
     setFormFeatured(false);
     setFormFreeShipping(false);
+    setFormBenefitId('');
+    setFormBenefitEnabled(false);
     setFormActive(true);
     setFormError('');
     setProductModalOpen(true);
@@ -646,6 +657,8 @@ export function AdminDashboardView({
     setFormImages(getProductGallery(product));
     setFormFeatured(product.featured);
     setFormFreeShipping(Boolean(product.freeShipping));
+    setFormBenefitId(product.benefitId || '');
+    setFormBenefitEnabled(Boolean(product.benefitEnabled));
     setFormActive(product.active);
     setFormError('');
     setProductModalOpen(true);
@@ -710,6 +723,8 @@ export function AdminDashboardView({
         specs: specsList,
         featured: isAdmin ? formFeatured : false,
         freeShipping: formFreeShipping,
+        benefitId: formBenefitId,
+        benefitEnabled: Boolean(formBenefitId) && formBenefitEnabled,
         active: canPublishOrEdit ? formActive : false,
         ...sellerBankFields,
         ...(!editingProductId && user
@@ -1393,6 +1408,12 @@ export function AdminDashboardView({
                     const isLow = !isOut && product.stock <= product.minStockThreshold;
                     const photoCount = getProductGallery(product).length;
                     const shareLinks = buildProductShareLinks(product);
+                    const linkedBenefit = product.benefitId
+                      ? benefits.find((b) => b.id === product.benefitId) || null
+                      : null;
+                    const linkedBenefitExpired = linkedBenefit
+                      ? isBenefitExpired(linkedBenefit)
+                      : false;
                     return (
                       <tr key={product.id} className="hover:bg-zinc-50/80">
                         <td className="py-2.5 px-4 max-w-[320px]">
@@ -1412,6 +1433,23 @@ export function AdminDashboardView({
                                   <span className="font-medium text-emerald-700">
                                     {' '}
                                     · Envío gratis activado
+                                  </span>
+                                )}
+                                {product.benefitEnabled && linkedBenefit && (
+                                  <span
+                                    className={`font-medium ${
+                                      linkedBenefitExpired || !linkedBenefit.active
+                                        ? 'text-amber-700'
+                                        : 'text-blue-700'
+                                    }`}
+                                  >
+                                    {' '}
+                                    · {getBenefitTypeLabel(linkedBenefit.type)}
+                                    {linkedBenefitExpired
+                                      ? ' (vencido)'
+                                      : !linkedBenefit.active
+                                        ? ' (pausado)'
+                                        : ''}
                                   </span>
                                 )}
                               </p>
@@ -2167,6 +2205,95 @@ export function AdminDashboardView({
                 defaultCategoryImage={getDefaultCategoryImage(formCategory)}
                 productName={formName}
               />
+
+              {/* Product Benefit / Discount Selection & Toggle */}
+              <div className="p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label
+                    htmlFor="product-benefit-select"
+                    className="text-xs font-semibold text-zinc-900"
+                  >
+                    Tipo de descuento / beneficio para este producto
+                  </label>
+                  <label className="inline-flex items-center gap-2 text-xs font-medium text-blue-800 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      disabled={!formBenefitId}
+                      checked={Boolean(formBenefitId) && formBenefitEnabled}
+                      onChange={(e) => setFormBenefitEnabled(e.target.checked)}
+                      className="accent-blue-700 disabled:opacity-40"
+                    />
+                    Habilitar descuento en catálogo
+                  </label>
+                </div>
+
+                <select
+                  id="product-benefit-select"
+                  value={formBenefitId}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    setFormBenefitId(nextId);
+                    if (nextId && !formBenefitId) {
+                      setFormBenefitEnabled(true);
+                    } else if (!nextId) {
+                      setFormBenefitEnabled(false);
+                    }
+                  }}
+                  className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                >
+                  <option value="">Sin descuento / beneficio asignado</option>
+                  {benefits.map((b) => {
+                    const expired = isBenefitExpired(b);
+                    const expLabel = formatExpirationDate(b.expiresAt);
+                    const statusTag = expired
+                      ? ' [VENCIDO]'
+                      : !b.active
+                        ? ' [PAUSADO]'
+                        : '';
+                    return (
+                      <option key={b.id} value={b.id}>
+                        {getBenefitTypeLabel(b.type)} — {formatBenefitSummary(b)}
+                        {expLabel ? ` · Vence ${expLabel}` : ''}
+                        {b.targetUserId !== 'all' ? ` (${b.targetUserName})` : ''}
+                        {statusTag}
+                      </option>
+                    );
+                  })}
+                </select>
+
+                {benefits.length === 0 ? (
+                  <p className="text-[11px] text-zinc-500">
+                    Creá descuentos, cuotas o cupones desde Alertas → Beneficios (ABM) para poder
+                    seleccionarlos en tus productos.
+                  </p>
+                ) : (
+                  (() => {
+                    const selectedBenefit = benefits.find((b) => b.id === formBenefitId);
+                    if (!selectedBenefit) return null;
+                    const expired = isBenefitExpired(selectedBenefit);
+                    const expLabel = formatExpirationDate(selectedBenefit.expiresAt);
+                    return (
+                      <p
+                        className={`text-[11px] ${
+                          expired || !selectedBenefit.active
+                            ? 'text-amber-700'
+                            : formBenefitEnabled
+                              ? 'text-emerald-700 font-medium'
+                              : 'text-zinc-500'
+                        }`}
+                      >
+                        {expired
+                          ? `Atención: este beneficio venció el ${expLabel} y no se mostrará en el catálogo hasta actualizar su fecha.`
+                          : !selectedBenefit.active
+                            ? 'Atención: este beneficio está pausado en el ABM y no se mostrará hasta activarlo.'
+                            : formBenefitEnabled
+                              ? `Visible en catálogo: ${getBenefitTypeLabel(selectedBenefit.type)} · ${formatBenefitSummary(selectedBenefit)}${expLabel ? ` (válido hasta ${expLabel})` : ''}.`
+                              : 'Beneficio asignado pero deshabilitado (no se informará en el catálogo).'}
+                      </p>
+                    );
+                  })()
+                )}
+              </div>
 
               <div className="flex flex-wrap items-center gap-x-6 gap-y-2.5 text-xs text-zinc-700 pt-1">
                 <label className="inline-flex items-center gap-2 cursor-pointer font-medium text-emerald-800">
