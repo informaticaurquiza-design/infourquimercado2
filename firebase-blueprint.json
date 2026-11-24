@@ -642,6 +642,12 @@
           "pattern": "^$|^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
           "description": "Optional benefit expiration date in YYYY-MM-DD format (empty string means no expiration)."
         },
+        "createdBy": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Optional UID of the authenticated user (client or admin) who created this benefit."
+        },
         "active": {
           "type": "boolean"
         },
@@ -705,7 +711,7 @@
     },
     "/benefits/{benefitId}": {
       "schema": { "$ref": "#/entities/CustomerBenefit" },
-      "description": "Storefront and per-customer benefits (installments, promo codes, and minimum-order discounts) managed by administrators."
+      "description": "Storefront and per-customer benefits (installments, promo codes, and minimum-order discounts) created and managed by administrators or their authenticated client owners."
     }
   }
 }

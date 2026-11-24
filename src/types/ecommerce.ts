@@ -174,6 +174,7 @@ export interface CustomerBenefit {
   minOrderAmount: number;
   maxInstallments: number;
   expiresAt?: string;
+  createdBy?: string;
   active: boolean;
   createdAt?: Timestamp | string;
   updatedAt?: Timestamp | string;

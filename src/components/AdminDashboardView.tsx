@@ -22,6 +22,7 @@ import {
   Send,
   Settings,
   ShieldAlert,
+  Tag,
   Trash2,
   Truck,
   Users,
@@ -82,6 +83,7 @@ import {
   type UserProfile,
 } from '../types/ecommerce';
 import { AdminAccountsPanel } from './AdminAccountsPanel';
+import { BenefitsManagerModal } from './BenefitsManagerModal';
 import { DatabaseBackupPanel } from './DatabaseBackupPanel';
 import { FacebookShareModal } from './FacebookShareModal';
 import { LocalDatabasePanel } from './LocalDatabasePanel';
@@ -299,6 +301,29 @@ export function AdminDashboardView({
   const [formError, setFormError] = useState('');
   const [savingProduct, setSavingProduct] = useState(false);
   const [skuScannerOpen, setSkuScannerOpen] = useState(false);
+  const [benefitsManagerOpen, setBenefitsManagerOpen] = useState(false);
+
+  const assignableBenefits = useMemo(() => {
+    if (isAdmin) return benefits;
+    const now = new Date();
+    const owned = benefits.filter((b) => Boolean(user) && b.createdBy === user?.uid);
+    const globalActive = benefits.filter(
+      (b) =>
+        b.createdBy !== user?.uid &&
+        b.targetUserId === 'all' &&
+        b.active &&
+        !isBenefitExpired(b, now),
+    );
+    const currentLinked = formBenefitId
+      ? benefits.find((b) => b.id === formBenefitId) || null
+      : null;
+    const merged = [...owned, ...globalActive, ...(currentLinked ? [currentLinked] : [])];
+    const unique = new Map<string, CustomerBenefit>();
+    for (const item of merged) {
+      unique.set(item.id, item);
+    }
+    return Array.from(unique.values());
+  }, [benefits, isAdmin, user, formBenefitId]);
 
   // Required bank details pre-check modal before publishing a new product
   const [bankModalOpen, setBankModalOpen] = useState(false);
@@ -1378,6 +1403,15 @@ export function AdminDashboardView({
 
               <button
                 type="button"
+                onClick={() => setBenefitsManagerOpen(true)}
+                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-medium text-zinc-800 bg-white border border-zinc-300 hover:border-zinc-950 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+              >
+                <Tag className="w-3.5 h-3.5 text-blue-700" />
+                Descuentos (ABM)
+              </button>
+
+              <button
+                type="button"
                 disabled={!canPublishOrEdit}
                 onClick={openNewProductModal}
                 className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-medium text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-45 disabled:cursor-not-allowed rounded-lg transition-colors whitespace-nowrap cursor-pointer"
@@ -2215,16 +2249,26 @@ export function AdminDashboardView({
                   >
                     Tipo de descuento / beneficio para este producto
                   </label>
-                  <label className="inline-flex items-center gap-2 text-xs font-medium text-blue-800 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      disabled={!formBenefitId}
-                      checked={Boolean(formBenefitId) && formBenefitEnabled}
-                      onChange={(e) => setFormBenefitEnabled(e.target.checked)}
-                      className="accent-blue-700 disabled:opacity-40"
-                    />
-                    Habilitar descuento en catálogo
-                  </label>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setBenefitsManagerOpen(true)}
+                      className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:underline cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Crear / editar descuentos
+                    </button>
+                    <label className="inline-flex items-center gap-2 text-xs font-medium text-blue-800 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        disabled={!formBenefitId}
+                        checked={Boolean(formBenefitId) && formBenefitEnabled}
+                        onChange={(e) => setFormBenefitEnabled(e.target.checked)}
+                        className="accent-blue-700 disabled:opacity-40"
+                      />
+                      Habilitar descuento en catálogo
+                    </label>
+                  </div>
                 </div>
 
                 <select
@@ -2242,7 +2286,7 @@ export function AdminDashboardView({
                   className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
                 >
                   <option value="">Sin descuento / beneficio asignado</option>
-                  {benefits.map((b) => {
+                  {assignableBenefits.map((b) => {
                     const expired = isBenefitExpired(b);
                     const expLabel = formatExpirationDate(b.expiresAt);
                     const statusTag = expired
@@ -2261,14 +2305,14 @@ export function AdminDashboardView({
                   })}
                 </select>
 
-                {benefits.length === 0 ? (
+                {assignableBenefits.length === 0 ? (
                   <p className="text-[11px] text-zinc-500">
-                    Creá descuentos, cuotas o cupones desde Alertas → Beneficios (ABM) para poder
-                    seleccionarlos en tus productos.
+                    Todavía no hay descuentos creados. Tocá &quot;Crear / editar descuentos&quot;
+                    para cargar cuotas, cupones o descuentos por monto y asignarlos a este producto.
                   </p>
                 ) : (
                   (() => {
-                    const selectedBenefit = benefits.find((b) => b.id === formBenefitId);
+                    const selectedBenefit = assignableBenefits.find((b) => b.id === formBenefitId);
                     if (!selectedBenefit) return null;
                     const expired = isBenefitExpired(selectedBenefit);
                     const expLabel = formatExpirationDate(selectedBenefit.expiresAt);
@@ -2686,6 +2730,18 @@ export function AdminDashboardView({
         onClose={() => setFacebookShareProduct(null)}
         onNotifyToast={onNotifyToast}
       />
+
+      {user && (
+        <BenefitsManagerModal
+          open={benefitsManagerOpen}
+          onClose={() => setBenefitsManagerOpen(false)}
+          user={user}
+          isAdmin={isAdmin}
+          benefits={benefits}
+          accounts={accounts}
+          onNotifyToast={onNotifyToast}
+        />
+      )}
     </div>
   );
 }

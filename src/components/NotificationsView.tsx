@@ -84,12 +84,15 @@ export function NotificationsView({
   const visibleCustomerBenefits = useMemo(() => {
     if (isAdmin) return benefits;
     const now = new Date();
-    return benefits.filter(
-      (b) =>
+    return benefits.filter((b) => {
+      const isOwnedByMe = Boolean(user) && b.createdBy === user?.uid;
+      if (isOwnedByMe) return true;
+      return (
         b.active &&
         !isBenefitExpired(b, now) &&
-        (b.targetUserId === 'all' || (Boolean(user) && b.targetUserId === user?.uid)),
-    );
+        (b.targetUserId === 'all' || (Boolean(user) && b.targetUserId === user?.uid))
+      );
+    });
   }, [benefits, isAdmin, user]);
 
   const activeBenefitsCount = useMemo(() => {
@@ -227,7 +230,7 @@ export function NotificationsView({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {isAdmin && (
+          {user && (
             <button
               type="button"
               onClick={() => {
@@ -237,7 +240,7 @@ export function NotificationsView({
               className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
             >
               <Settings2 className="w-3.5 h-3.5" />
-              ABM de Beneficios
+              {isAdmin ? 'ABM de Beneficios' : 'Gestionar descuentos (ABM)'}
             </button>
           )}
 
@@ -411,7 +414,7 @@ export function NotificationsView({
               ))}
             </div>
 
-            {filterType !== 'promo' && (isAdmin || activeBenefitsCount > 0) && (
+            {filterType !== 'promo' && (
               <button
                 type="button"
                 onClick={() => setFilterType('promo')}
@@ -420,68 +423,63 @@ export function NotificationsView({
                 <Gift className="w-3.5 h-3.5" />
                 {isAdmin
                   ? `Gestionar beneficios (${benefits.length})`
-                  : `Ver mis ${activeBenefitsCount} beneficios vigentes →`}
+                  : activeBenefitsCount > 0
+                    ? `Ver y gestionar beneficios (${activeBenefitsCount} vigentes) →`
+                    : 'Crear o gestionar beneficios →'}
               </button>
             )}
           </div>
 
-          {/* Dedicated Benefits Section (ABM for Admin + Active Benefits for Customers) */}
+          {/* Dedicated Benefits Section (ABM for Admin & Clients + Active Benefits) */}
           {showBenefitsWorkspace && (
             <div className="mt-6 bg-white border border-zinc-200 rounded-xl p-6 space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-zinc-200">
                 <div>
                   <h2 className="font-display text-lg font-bold text-zinc-950 flex items-center gap-2">
                     <Gift className="w-5 h-5 text-blue-700" />
-                    {isAdmin ? 'Gestión de Beneficios (ABM)' : 'Tus beneficios disponibles'}
+                    {isAdmin ? 'Gestión de Beneficios (ABM)' : 'Beneficios y Mis Descuentos (ABM)'}
                   </h2>
                   <p className="text-xs text-zinc-600 mt-0.5">
                     {isAdmin
                       ? 'Administrá cuotas sin interés, códigos promocionales y porcentajes de descuento por monto para cada cliente o para toda la tienda.'
-                      : 'Beneficios generales de la tienda y promociones exclusivas asignadas a tu cuenta.'}
+                      : 'Consultá los beneficios vigentes para tu cuenta y creá o editá tus propios descuentos para asignarlos a tus productos.'}
                   </p>
                 </div>
 
-                {isAdmin && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingBenefit(null);
-                      setManagerOpen(true);
-                    }}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-zinc-950 hover:bg-blue-700 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    Nuevo beneficio / ABM
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingBenefit(null);
+                    setManagerOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-zinc-950 hover:bg-blue-700 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Nuevo beneficio / ABM
+                </button>
               </div>
 
               {visibleCustomerBenefits.length === 0 ? (
                 <div className="py-8 text-center">
                   <Gift className="w-8 h-8 text-zinc-300 mx-auto mb-2 stroke-[1.5]" />
                   <p className="text-sm font-semibold text-zinc-900">
-                    {isAdmin
-                      ? 'Todavía no cargaste beneficios'
-                      : 'Por el momento no tenés beneficios adicionales cargados'}
+                    Todavía no hay beneficios cargados
                   </p>
                   <p className="text-xs text-zinc-500 mt-1 max-w-md mx-auto">
-                    {isAdmin
-                      ? 'Creá beneficios de cuotas sin interés, códigos de descuento o descuentos automáticos por monto mayor a un importe para cada cliente.'
-                      : 'Cuando el administrador habilite cuotas, códigos o descuentos para tu cuenta, aparecerán aquí.'}
+                    Creá cuotas sin interés, códigos de descuento o descuentos automáticos por monto
+                    con fecha de vencimiento para aplicarlos en tus productos.
                   </p>
-                  {isAdmin && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingBenefit(null);
-                        setManagerOpen(true);
-                      }}
-                      className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      Crear primer beneficio
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingBenefit(null);
+                      setManagerOpen(true);
+                    }}
+                    className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Crear primer beneficio
+                  </button>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -634,8 +632,8 @@ export function NotificationsView({
                             ) : null}
                           </div>
 
-                          {/* Admin quick ABM actions */}
-                          {isAdmin && (
+                          {/* Admin or Owner quick ABM actions */}
+                          {(isAdmin || (Boolean(user) && benefit.createdBy === user.uid)) && (
                             <div className="flex items-center gap-1">
                               <button
                                 type="button"
@@ -792,13 +790,15 @@ export function NotificationsView({
         </>
       )}
 
-      {isAdmin && (
+      {user && (
         <BenefitsManagerModal
           open={managerOpen}
           onClose={() => {
             setManagerOpen(false);
             setEditingBenefit(null);
           }}
+          user={user}
+          isAdmin={isAdmin}
           benefits={benefits}
           accounts={accounts}
           initialEditBenefit={editingBenefit}

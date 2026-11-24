@@ -224,6 +224,7 @@ function AppContent() {
   const [cloudAdminBenefits, setCloudAdminBenefits] = useState<CustomerBenefit[]>([]);
   const [cloudGlobalBenefits, setCloudGlobalBenefits] = useState<CustomerBenefit[]>([]);
   const [cloudPersonalBenefits, setCloudPersonalBenefits] = useState<CustomerBenefit[]>([]);
+  const [cloudOwnedBenefits, setCloudOwnedBenefits] = useState<CustomerBenefit[]>([]);
   const [cloudSubscriptionPayments, setCloudSubscriptionPayments] = useState<SubscriptionPayment[]>(
     [],
   );
@@ -757,18 +758,20 @@ function AppContent() {
     return () => unsubscribe();
   }, [dbMode, cloudAuthReady, cloudIsAdmin]);
 
-  // 4f. Real-time Benefits Listeners (Cloud Mode: full list for Admin; global + personal for customers/guests)
+  // 4f. Real-time Benefits Listeners (Cloud Mode: full list for Admin; global + personal + owned for customers/guests)
   useEffect(() => {
     if (dbMode !== 'cloud' || !cloudAuthReady) {
       setCloudAdminBenefits([]);
       setCloudGlobalBenefits([]);
       setCloudPersonalBenefits([]);
+      setCloudOwnedBenefits([]);
       return;
     }
 
     if (cloudIsAdmin) {
       setCloudGlobalBenefits([]);
       setCloudPersonalBenefits([]);
+      setCloudOwnedBenefits([]);
       const unsubAdmin = onSnapshot(
         query(collection(db, 'benefits')),
         (snapshot) => {
@@ -804,6 +807,7 @@ function AppContent() {
 
     if (!cloudUser) {
       setCloudPersonalBenefits([]);
+      setCloudOwnedBenefits([]);
       return () => unsubGlobal();
     }
 
@@ -821,15 +825,30 @@ function AppContent() {
       },
     );
 
+    const unsubOwned = onSnapshot(
+      query(collection(db, 'benefits'), where('createdBy', '==', cloudUser.uid)),
+      (snapshot) => {
+        const list = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<CustomerBenefit, 'id'>),
+        }));
+        setCloudOwnedBenefits(list);
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'benefits');
+      },
+    );
+
     return () => {
       unsubGlobal();
       unsubPersonal();
+      unsubOwned();
     };
   }, [dbMode, cloudAuthReady, cloudIsAdmin, cloudUser]);
 
   const cloudAllBenefits = useMemo(() => {
     if (cloudIsAdmin) return cloudAdminBenefits;
-    const merged = [...cloudPersonalBenefits, ...cloudGlobalBenefits];
+    const merged = [...cloudOwnedBenefits, ...cloudPersonalBenefits, ...cloudGlobalBenefits];
     const uniqueMap = new Map<string, CustomerBenefit>();
     for (const item of merged) {
       uniqueMap.set(item.id, item);
@@ -837,7 +856,13 @@ function AppContent() {
     return Array.from(uniqueMap.values()).sort(
       (a, b) => getMillis(b.createdAt) - getMillis(a.createdAt),
     );
-  }, [cloudIsAdmin, cloudAdminBenefits, cloudPersonalBenefits, cloudGlobalBenefits]);
+  }, [
+    cloudIsAdmin,
+    cloudAdminBenefits,
+    cloudOwnedBenefits,
+    cloudPersonalBenefits,
+    cloudGlobalBenefits,
+  ]);
 
   const cloudAllNotifications = useMemo(() => {
     const merged = [...cloudPersonalNotifications, ...cloudBroadcastNotifications];

@@ -22,6 +22,7 @@ import {
 import { createOrUpdateBenefit, deleteBenefitById } from '../services/dataService';
 import {
   BENEFIT_TYPE_OPTIONS,
+  type AppUser,
   type BenefitType,
   type CustomerBenefit,
   type UserProfile,
@@ -30,6 +31,8 @@ import {
 interface BenefitsManagerModalProps {
   open: boolean;
   onClose: () => void;
+  user?: AppUser | null;
+  isAdmin?: boolean;
   benefits: CustomerBenefit[];
   accounts: UserProfile[];
   initialEditBenefit?: CustomerBenefit | null;
@@ -41,6 +44,8 @@ const QUICK_INSTALLMENTS = [2, 3, 6, 9, 12];
 export function BenefitsManagerModal({
   open,
   onClose,
+  user = null,
+  isAdmin = false,
   benefits,
   accounts,
   initialEditBenefit = null,
@@ -114,6 +119,10 @@ export function BenefitsManagerModal({
 
   function resolveTargetUserName(uid: string): string {
     if (uid === 'all') return 'Todos los clientes';
+    if (!isAdmin && user && uid === user.uid) {
+      const label = user.displayName?.trim() || user.email?.trim() || 'Mi cuenta';
+      return user.email && label !== user.email ? `${label} (${user.email})` : label;
+    }
     const found = accounts.find((acc) => acc.uid === uid);
     if (found) {
       const label = found.displayName?.trim() || found.businessName?.trim() || found.email;
@@ -258,7 +267,13 @@ export function BenefitsManagerModal({
     }
   }
 
-  const filteredBenefits = benefits.filter((b) => {
+  const manageableBenefits = isAdmin
+    ? benefits
+    : user
+      ? benefits.filter((b) => b.createdBy === user.uid)
+      : [];
+
+  const filteredBenefits = manageableBenefits.filter((b) => {
     if (filterScope === 'global') return b.targetUserId === 'all';
     if (filterScope === 'personal') return b.targetUserId !== 'all';
     return true;
@@ -274,11 +289,12 @@ export function BenefitsManagerModal({
             <Gift className="w-5 h-5 text-blue-700" />
             <div>
               <h2 className="font-display text-base font-bold text-zinc-950">
-                ABM de Beneficios por Cliente
+                {isAdmin ? 'ABM de Beneficios por Cliente' : 'Mis Descuentos y Beneficios (ABM)'}
               </h2>
               <p className="text-xs text-zinc-500">
-                Configurá cuotas sin interés, códigos de descuento o descuentos automáticos por
-                monto para toda la tienda o para cada cliente.
+                {isAdmin
+                  ? 'Configurá cuotas sin interés, códigos de descuento o descuentos automáticos por monto para toda la tienda o para cada cliente.'
+                  : 'Creá y editá cuotas sin interés, códigos de descuento o descuentos por monto con fecha de vencimiento para asignar a tus productos.'}
               </p>
             </div>
           </div>
@@ -358,21 +374,34 @@ export function BenefitsManagerModal({
                 onChange={(e) => setTargetUserId(e.target.value)}
                 className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
               >
-                <option value="all">Todos los clientes (beneficio general)</option>
-                {sortedAccounts.map((acc) => {
-                  const label = acc.displayName?.trim() || acc.businessName?.trim() || acc.email;
-                  return (
-                    <option key={acc.uid} value={acc.uid}>
-                      {label}
-                      {acc.email && label !== acc.email ? ` — ${acc.email}` : ''}
-                    </option>
-                  );
-                })}
+                <option value="all">Todos los clientes (visible en el catálogo)</option>
+                {isAdmin
+                  ? sortedAccounts.map((acc) => {
+                      const label =
+                        acc.displayName?.trim() || acc.businessName?.trim() || acc.email;
+                      return (
+                        <option key={acc.uid} value={acc.uid}>
+                          {label}
+                          {acc.email && label !== acc.email ? ` — ${acc.email}` : ''}
+                        </option>
+                      );
+                    })
+                  : user && (
+                      <option value={user.uid}>
+                        Solo mi cuenta ({user.displayName?.trim() || user.email || 'Mi cuenta'})
+                      </option>
+                    )}
               </select>
-              {sortedAccounts.length === 0 && (
+              {isAdmin && sortedAccounts.length === 0 && (
                 <p className="text-[11px] text-zinc-500 mt-1">
                   Cuando haya clientes registrados aparecerán aquí para asignar beneficios
                   individuales.
+                </p>
+              )}
+              {!isAdmin && (
+                <p className="text-[11px] text-zinc-500 mt-1">
+                  Elegí &quot;Todos los clientes&quot; para que el descuento se informe a cualquier
+                  comprador cuando lo habilites en un producto del catálogo.
                 </p>
               )}
             </div>
@@ -640,7 +669,9 @@ export function BenefitsManagerModal({
             <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
               <div>
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-700">
-                  Beneficios registrados ({benefits.length})
+                  {isAdmin
+                    ? `Beneficios registrados (${manageableBenefits.length})`
+                    : `Mis beneficios creados (${manageableBenefits.length})`}
                 </h3>
                 <p className="text-[11px] text-zinc-500">
                   Editá, pausá o eliminá beneficios en tiempo real.

@@ -16,7 +16,13 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { getDefaultCategoryImage } from '../lib/categoryAssets';
-import { BOOTSTRAPPED_ADMIN_EMAIL, OperationType, db, handleFirestoreError } from '../lib/firebase';
+import {
+  BOOTSTRAPPED_ADMIN_EMAIL,
+  OperationType,
+  auth,
+  db,
+  handleFirestoreError,
+} from '../lib/firebase';
 import {
   MAX_PRODUCT_IMAGES,
   createCompactThumbnail,
@@ -803,6 +809,10 @@ export async function createOrUpdateBenefit(input: {
   const benefitPath = `benefits/${benefitId}`;
   const ref = doc(db, 'benefits', benefitId);
   const nowIso = new Date().toISOString();
+  const creatorUid =
+    auth.currentUser?.uid && ID_PATTERN.test(auth.currentUser.uid)
+      ? clampString(auth.currentUser.uid, 128)
+      : undefined;
 
   const commonFields = {
     title,
@@ -825,6 +835,7 @@ export async function createOrUpdateBenefit(input: {
     } else {
       await setDoc(ref, {
         ...commonFields,
+        ...(creatorUid ? { createdBy: creatorUid } : {}),
         createdAt: serverTimestamp(),
       });
     }
@@ -840,6 +851,7 @@ export async function createOrUpdateBenefit(input: {
       minOrderAmount,
       maxInstallments,
       expiresAt,
+      ...(creatorUid && !input.id ? { createdBy: creatorUid } : {}),
       active: Boolean(input.active),
       updatedAt: nowIso,
     };

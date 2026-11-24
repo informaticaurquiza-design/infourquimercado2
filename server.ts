@@ -957,7 +957,12 @@ app.get('/api/local/bootstrap', (req, res) => {
   const benefits = isAdmin
     ? [...db.benefits]
     : session
-      ? db.benefits.filter((b) => b.targetUserId === 'all' || b.targetUserId === session.uid)
+      ? db.benefits.filter(
+          (b) =>
+            b.targetUserId === 'all' ||
+            b.targetUserId === session.uid ||
+            b.createdBy === session.uid,
+        )
       : db.benefits.filter((b) => b.targetUserId === 'all');
 
   const userRecord = session ? db.users.find((u) => u.uid === session.uid) : null;
@@ -1698,20 +1703,35 @@ app.delete('/api/local/delivery-agents/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
-// --- API: Customer Benefits ABM (Admin Only) ---
+// --- API: Customer Benefits ABM (Admins & Authenticated Client Owners) ---
 
-function normalizeBenefitBody(body: Record<string, unknown>, dbUsers: StoredLocalUser[]) {
+function normalizeBenefitBody(
+  body: Record<string, unknown>,
+  dbUsers: StoredLocalUser[],
+  session: { uid: string; role: 'customer' | 'admin' },
+) {
   const type = String(body.type || '').trim() as BenefitType;
   const title = clampString(String(body.title || ''), 100);
   const description = clampString(String(body.description || ''), 240);
-  const targetUserId = clampString(String(body.targetUserId || 'all'), 128) || 'all';
+  const rawTargetUserId = clampString(String(body.targetUserId || 'all'), 128) || 'all';
+  if (
+    session.role !== 'admin' &&
+    rawTargetUserId !== 'all' &&
+    rawTargetUserId !== session.uid
+  ) {
+    return {
+      errMsg: 'Solo podés asignar descuentos a todos los clientes o a tu propia cuenta.',
+      normalized: null,
+    };
+  }
+  const targetUserId = rawTargetUserId;
   let targetUserName = clampString(String(body.targetUserName || ''), 120);
   if (targetUserId === 'all') {
     targetUserName = 'Todos los clientes';
-  } else if (!targetUserName) {
+  } else if (!targetUserName || session.role !== 'admin') {
     const matchedUser = dbUsers.find((u) => u.uid === targetUserId);
     targetUserName = clampString(
-      matchedUser?.displayName || matchedUser?.email || 'Cliente registrado',
+      matchedUser?.displayName || matchedUser?.email || targetUserName || 'Cliente registrado',
       120,
     );
   }
@@ -1757,13 +1777,17 @@ function normalizeBenefitBody(body: Record<string, unknown>, dbUsers: StoredLoca
 }
 
 app.post('/api/local/benefits', async (req, res) => {
-  const session = requireAdmin(req, res);
+  const session = requireAuth(req, res);
   if (!session) return;
 
   const db = loadLocalDb();
-  const { errMsg, normalized } = normalizeBenefitBody((req.body ?? {}) as Record<string, unknown>, db.users);
-  if (errMsg) {
-    res.status(400).json({ error: errMsg });
+  const { errMsg, normalized } = normalizeBenefitBody(
+    (req.body ?? {}) as Record<string, unknown>,
+    db.users,
+    session,
+  );
+  if (errMsg || !normalized) {
+    res.status(400).json({ error: errMsg || 'Datos de beneficio inválidos.' });
     return;
   }
 
@@ -1771,6 +1795,7 @@ app.post('/api/local/benefits', async (req, res) => {
   const created: CustomerBenefit = {
     id: safeId('ben'),
     ...normalized,
+    createdBy: session.uid,
     createdAt: nowIso,
     updatedAt: nowIso,
   };
@@ -1784,14 +1809,18 @@ app.post('/api/local/benefits', async (req, res) => {
 });
 
 app.put('/api/local/benefits/:id', async (req, res) => {
-  const session = requireAdmin(req, res);
+  const session = requireAuth(req, res);
   if (!session) return;
 
   const benefitId = String(req.params.id || '').trim();
   const db = loadLocalDb();
-  const { errMsg, normalized } = normalizeBenefitBody((req.body ?? {}) as Record<string, unknown>, db.users);
-  if (errMsg) {
-    res.status(400).json({ error: errMsg });
+  const { errMsg, normalized } = normalizeBenefitBody(
+    (req.body ?? {}) as Record<string, unknown>,
+    db.users,
+    session,
+  );
+  if (errMsg || !normalized) {
+    res.status(400).json({ error: errMsg || 'Datos de beneficio inválidos.' });
     return;
   }
 
@@ -1799,9 +1828,14 @@ app.put('/api/local/benefits/:id', async (req, res) => {
     const updated = await withDbWriteLock((lockedDb) => {
       const idx = lockedDb.benefits.findIndex((b) => b.id === benefitId);
       if (idx === -1) throw new Error('NOT_FOUND');
+      const existing = lockedDb.benefits[idx];
+      if (session.role !== 'admin' && existing.createdBy !== session.uid) {
+        throw new Error('FORBIDDEN');
+      }
       const next: CustomerBenefit = {
-        ...lockedDb.benefits[idx],
+        ...existing,
         ...normalized,
+        createdBy: existing.createdBy,
         updatedAt: new Date().toISOString(),
       };
       lockedDb.benefits[idx] = next;
@@ -1810,19 +1844,37 @@ app.put('/api/local/benefits/:id', async (req, res) => {
 
     broadcastDbChange('benefits');
     res.json(updated);
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.message === 'FORBIDDEN') {
+      res.status(403).json({ error: 'Solo podés editar tus propios descuentos y beneficios.' });
+      return;
+    }
     res.status(404).json({ error: 'Beneficio no encontrado.' });
   }
 });
 
 app.delete('/api/local/benefits/:id', async (req, res) => {
-  const session = requireAdmin(req, res);
+  const session = requireAuth(req, res);
   if (!session) return;
 
   const benefitId = String(req.params.id || '').trim();
-  await withDbWriteLock((lockedDb) => {
-    lockedDb.benefits = lockedDb.benefits.filter((b) => b.id !== benefitId);
-  });
+  try {
+    await withDbWriteLock((lockedDb) => {
+      const target = lockedDb.benefits.find((b) => b.id === benefitId);
+      if (!target) throw new Error('NOT_FOUND');
+      if (session.role !== 'admin' && target.createdBy !== session.uid) {
+        throw new Error('FORBIDDEN');
+      }
+      lockedDb.benefits = lockedDb.benefits.filter((b) => b.id !== benefitId);
+    });
+  } catch (err) {
+    if (err instanceof Error && err.message === 'FORBIDDEN') {
+      res.status(403).json({ error: 'Solo podés eliminar tus propios descuentos y beneficios.' });
+      return;
+    }
+    res.status(404).json({ error: 'Beneficio no encontrado.' });
+    return;
+  }
 
   broadcastDbChange('benefits');
   res.json({ ok: true });
