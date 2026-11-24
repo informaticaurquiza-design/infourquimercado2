@@ -9,6 +9,7 @@ import type {
   CartItem,
   CategoryId,
   DatabaseMode,
+  DeliveryMethod,
   NotificationType,
   Order,
   PaymentMethod,
@@ -83,6 +84,7 @@ export interface UnifiedCheckoutOrderInput {
   shippingCity: string;
   shippingPostalCode: string;
   shippingNotes: string;
+  deliveryMethod?: DeliveryMethod;
   subtotal: number;
   discount: number;
   shippingCost: number;

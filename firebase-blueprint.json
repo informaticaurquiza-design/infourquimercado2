@@ -170,6 +170,11 @@
           "type": "string",
           "maxLength": 240
         },
+        "deliveryMethod": {
+          "type": "string",
+          "enum": ["delivery", "pickup"],
+          "description": "Selected fulfillment mode: home delivery or in-person pickup."
+        },
         "items": {
           "type": "array"
         },

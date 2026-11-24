@@ -41,6 +41,7 @@ import type {
   CartItem,
   CategoryId,
   DatabaseBackupPayload,
+  DeliveryMethod,
   NotificationType,
   Order,
   PaymentMethod,
@@ -209,6 +210,7 @@ export interface CheckoutOrderInput {
   shippingCity: string;
   shippingPostalCode: string;
   shippingNotes: string;
+  deliveryMethod?: DeliveryMethod;
   subtotal: number;
   discount: number;
   shippingCost: number;
@@ -269,6 +271,20 @@ export async function createOrderWithInventoryUpdate(input: CheckoutOrderInput):
         ? 'pending_cash'
         : 'approved';
 
+  const deliveryMethod: DeliveryMethod =
+    input.deliveryMethod === 'pickup' ? 'pickup' : 'delivery';
+  const isPickup = deliveryMethod === 'pickup';
+  const resolvedShippingAddress = isPickup
+    ? 'Retiro en domicilio'
+    : clampString(input.shippingAddress, 200);
+  const resolvedShippingCity = isPickup
+    ? 'Retiro personal'
+    : clampString(input.shippingCity, 80);
+  const resolvedShippingPostalCode = isPickup
+    ? 'RET'
+    : clampString(input.shippingPostalCode, 20);
+  const resolvedShippingCost = isPickup ? 0 : Math.max(0, Math.round(input.shippingCost));
+
   const initialEvent: TrackingEvent = {
     status: 'confirmed',
     label: 'Pedido confirmado',
@@ -276,10 +292,12 @@ export async function createOrderWithInventoryUpdate(input: CheckoutOrderInput):
     note:
       input.paymentMethod === 'transfer'
         ? cleanReceipt
-          ? `Transferencia registrada con comprobante adjunto${cleanReceipt.operationNumber ? ` (Op. ${cleanReceipt.operationNumber})` : ''}. Reserva de inventario confirmada.`
-          : 'Transferencia registrada. Reserva de inventario confirmada.'
+          ? `Transferencia registrada con comprobante adjunto${cleanReceipt.operationNumber ? ` (Op. ${cleanReceipt.operationNumber})` : ''}. ${isPickup ? 'Modalidad: retiro en domicilio.' : 'Reserva de inventario confirmada.'}`
+          : `Transferencia registrada. ${isPickup ? 'Modalidad: retiro en domicilio.' : 'Reserva de inventario confirmada.'}`
         : input.paymentMethod === 'cash'
-          ? 'Pago en efectivo al recibir / retirar el pedido. Reserva de inventario confirmada.'
+          ? isPickup
+            ? 'Pago en efectivo al retirar en domicilio. Reserva de inventario confirmada.'
+            : 'Pago en efectivo al recibir el pedido en domicilio. Reserva de inventario confirmada.'
           : `Pago aprobado (${input.paymentBrand}${input.installments > 1 ? ` · ${input.installments} cuotas` : ''}).`,
     timestampIso: nowIso,
   };
@@ -302,14 +320,15 @@ export async function createOrderWithInventoryUpdate(input: CheckoutOrderInput):
     customerName: clampString(input.customerName, 100),
     customerEmail: clampString(input.user.email || '', 120),
     shippingPhone: clampString(input.shippingPhone, 32),
-    shippingAddress: clampString(input.shippingAddress, 200),
-    shippingCity: clampString(input.shippingCity, 80),
-    shippingPostalCode: clampString(input.shippingPostalCode, 20),
+    shippingAddress: resolvedShippingAddress,
+    shippingCity: resolvedShippingCity,
+    shippingPostalCode: resolvedShippingPostalCode,
     shippingNotes: clampString(input.shippingNotes || 'Sin indicaciones adicionales', 240),
+    deliveryMethod,
     items: compactOrderItems,
     subtotal: Math.round(input.subtotal),
     discount: Math.round(input.discount),
-    shippingCost: Math.round(input.shippingCost),
+    shippingCost: resolvedShippingCost,
     total: Math.round(input.total),
     paymentMethod: input.paymentMethod,
     paymentBrand: clampString(input.paymentBrand, 32),
@@ -319,9 +338,11 @@ export async function createOrderWithInventoryUpdate(input: CheckoutOrderInput):
     paymentStatus,
     ...(cleanReceipt ? { paymentReceipt: cleanReceipt } : {}),
     shipmentStatus: 'confirmed' as ShipmentStatus,
-    carrier: 'Infourqui Express Logística',
-    estimatedDelivery: '3 a 5 días hábiles',
-    currentLocation: 'Depósito Central — Reserva confirmada',
+    carrier: isPickup ? 'Retiro en domicilio' : 'Infourqui Express Logística',
+    estimatedDelivery: isPickup ? 'A coordinar por contacto' : '3 a 5 días hábiles',
+    currentLocation: isPickup
+      ? 'Listo para coordinar retiro en domicilio'
+      : 'Depósito Central — Reserva confirmada',
     trackingEvents: [initialEvent],
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -330,7 +351,9 @@ export async function createOrderWithInventoryUpdate(input: CheckoutOrderInput):
   const notificationData = {
     userId: input.user.uid,
     title: `Pedido ${orderNumber} confirmado`,
-    message: `Tu compra fue procesada correctamente. Código de seguimiento: ${trackingCode}.`,
+    message: isPickup
+      ? `Tu compra con retiro en domicilio fue confirmada. Código: ${trackingCode}.`
+      : `Tu compra fue procesada correctamente. Código de seguimiento: ${trackingCode}.`,
     type: 'order' as NotificationType,
     orderId,
     read: false,
@@ -1072,6 +1095,9 @@ export async function restoreCloudDatabaseBackup(
           shippingCity: shippingCity.length >= 2 ? shippingCity : 'Ciudad',
           shippingPostalCode: shippingPostalCode.length >= 3 ? shippingPostalCode : '0000',
           shippingNotes: clampString(String(o.shippingNotes || ''), 240),
+          ...(o.deliveryMethod === 'pickup' || o.deliveryMethod === 'delivery'
+            ? { deliveryMethod: o.deliveryMethod }
+            : {}),
           items,
           subtotal: Math.max(0, Math.min(500000000, Math.round(Number(o.subtotal) || total))),
           discount: Math.max(0, Math.min(500000000, Math.round(Number(o.discount) || 0))),

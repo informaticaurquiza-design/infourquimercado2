@@ -107,6 +107,7 @@ export interface CartItem {
   sellerBankAccountHolder?: string;
 }
 
+export type DeliveryMethod = 'delivery' | 'pickup';
 export type PaymentMethod = 'card' | 'wallet' | 'transfer' | 'cash';
 export type PaymentStatus = 'approved' | 'pending_transfer' | 'pending_cash' | 'refunded';
 export type ShipmentStatus =
@@ -159,6 +160,7 @@ export interface Order {
   shippingCity: string;
   shippingPostalCode: string;
   shippingNotes: string;
+  deliveryMethod?: DeliveryMethod;
   items: OrderItem[];
   subtotal: number;
   discount: number;

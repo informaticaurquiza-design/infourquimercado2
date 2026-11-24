@@ -1443,8 +1443,21 @@ export function AdminDashboardView({
                           <p className="font-medium text-zinc-950">{order.customerName}</p>
                           <p className="text-[11px] text-zinc-500">{order.customerEmail}</p>
                         </td>
-                        <td className="py-3 px-4 text-zinc-600 max-w-[180px] truncate">
-                          {order.shippingCity} ({order.shippingPostalCode})
+                        <td className="py-3 px-4 text-zinc-600 max-w-[200px]">
+                          {order.deliveryMethod === 'pickup' ||
+                          order.carrier === 'Retiro en domicilio' ? (
+                            <div>
+                              <p className="font-medium text-blue-700">Retiro en domicilio</p>
+                              <p className="text-[11px] text-zinc-400">Sin costo de envío</p>
+                            </div>
+                          ) : (
+                            <div className="truncate">
+                              <p className="font-medium text-zinc-900 truncate">Envío a domicilio</p>
+                              <p className="text-[11px] text-zinc-500 truncate">
+                                {order.shippingCity} ({order.shippingPostalCode})
+                              </p>
+                            </div>
+                          )}
                         </td>
                         <td className="py-3 px-4 whitespace-nowrap">
                           <p className="font-medium text-zinc-900">

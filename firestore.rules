@@ -164,7 +164,7 @@ service cloud.firestore {
       && data.keys().hasOnly([
         'orderNumber', 'trackingCode', 'userId', 'customerName', 'customerEmail',
         'shippingPhone', 'shippingAddress', 'shippingCity', 'shippingPostalCode',
-        'shippingNotes', 'items', 'subtotal', 'discount', 'shippingCost', 'total',
+        'shippingNotes', 'deliveryMethod', 'items', 'subtotal', 'discount', 'shippingCost', 'total',
         'paymentMethod', 'paymentBrand', 'paymentLast4', 'installments', 'transactionId',
         'paymentStatus', 'paymentReceipt', 'shipmentStatus', 'carrier', 'estimatedDelivery',
         'currentLocation', 'trackingEvents', 'createdAt', 'updatedAt'
@@ -179,6 +179,7 @@ service cloud.firestore {
       && data.shippingCity is string && data.shippingCity.size() >= 2 && data.shippingCity.size() <= 80
       && data.shippingPostalCode is string && data.shippingPostalCode.size() >= 3 && data.shippingPostalCode.size() <= 20
       && data.shippingNotes is string && data.shippingNotes.size() <= 240
+      && (!('deliveryMethod' in data) || (data.deliveryMethod is string && data.deliveryMethod in ['delivery', 'pickup']))
       && data.items is list && data.items.size() >= 1 && data.items.size() <= 30
       && data.items[0] is map
       && data.subtotal is number && data.subtotal >= 0 && data.subtotal <= 500000000

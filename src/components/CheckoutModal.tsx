@@ -8,8 +8,10 @@ import {
   FileCheck2,
   Loader2,
   Lock,
+  MapPin,
   RefreshCw,
   ShieldCheck,
+  Store,
   Trash2,
   Truck,
   Upload,
@@ -26,6 +28,7 @@ import {
 import type {
   AppUser,
   CartItem,
+  DeliveryMethod,
   Order,
   PaymentMethod,
   PaymentReceipt,
@@ -61,6 +64,7 @@ export function CheckoutModal({
   onTrackOrder,
 }: CheckoutModalProps) {
   const [step, setStep] = useState<'shipping' | 'payment' | 'processing' | 'receipt'>('shipping');
+  const [deliveryMethod, setDeliveryMethod] = useState<DeliveryMethod>('delivery');
   const [customerName, setCustomerName] = useState('');
   const [shippingPhone, setShippingPhone] = useState('');
   const [shippingAddress, setShippingAddress] = useState('');
@@ -112,6 +116,7 @@ export function CheckoutModal({
   useEffect(() => {
     if (open) {
       setStep('shipping');
+      setDeliveryMethod('delivery');
       setPaymentMethod('transfer');
       setErrorMessage('');
       setCompletedOrder(null);
@@ -135,10 +140,12 @@ export function CheckoutModal({
   const transferDiscount = paymentMethod === 'transfer' ? Math.round((subtotal - promoDiscount) * 0.05) : 0;
   const totalDiscount = promoDiscount + transferDiscount;
   const hasFreeShippingProduct = items.some((item) => item.freeShipping);
-  const shippingCost =
+  const standardDeliveryCost =
     hasFreeShippingProduct || threshold === 0 || subtotal - totalDiscount >= threshold
       ? 0
       : baseShippingCost;
+  const isPickup = deliveryMethod === 'pickup';
+  const shippingCost = isPickup ? 0 : standardDeliveryCost;
   const total = Math.max(1, subtotal - totalDiscount + shippingCost);
 
   const parsedCashTendered = cashTendered.trim() ? Number(cashTendered) : NaN;
@@ -272,8 +279,13 @@ export function CheckoutModal({
       setErrorMessage('Ingresá un teléfono de contacto válido.');
       return;
     }
-    if (shippingAddress.trim().length < 4 || shippingCity.trim().length < 2 || shippingPostalCode.trim().length < 3) {
-      setErrorMessage('Completá dirección, ciudad y código postal para coordinar el envío.');
+    if (
+      deliveryMethod === 'delivery' &&
+      (shippingAddress.trim().length < 4 ||
+        shippingCity.trim().length < 2 ||
+        shippingPostalCode.trim().length < 3)
+    ) {
+      setErrorMessage('Completá dirección, ciudad y código postal para coordinar el envío a domicilio.');
       return;
     }
     setStep('payment');
@@ -342,10 +354,11 @@ export function CheckoutModal({
         cartItems: items,
         customerName,
         shippingPhone,
-        shippingAddress,
-        shippingCity,
-        shippingPostalCode,
+        shippingAddress: isPickup ? 'Retiro en domicilio' : shippingAddress,
+        shippingCity: isPickup ? 'Retiro personal' : shippingCity,
+        shippingPostalCode: isPickup ? 'RET' : shippingPostalCode,
         shippingNotes: finalNotes,
+        deliveryMethod,
         subtotal,
         discount: totalDiscount,
         shippingCost,
@@ -357,7 +370,7 @@ export function CheckoutModal({
         paymentReceipt,
       });
 
-      if (saveDefaultAddress) {
+      if (!isPickup && saveDefaultAddress) {
         void updateUserProfile(user.uid, {
           displayName: customerName,
           phone: shippingPhone,
@@ -365,14 +378,23 @@ export function CheckoutModal({
           defaultCity: shippingCity,
           defaultPostalCode: shippingPostalCode,
         }).catch(() => {});
+      } else if (isPickup) {
+        void updateUserProfile(user.uid, {
+          displayName: customerName,
+          phone: shippingPhone,
+        }).catch(() => {});
       }
 
+      const deliveryTag =
+        created.deliveryMethod === 'pickup' || created.carrier === 'Retiro en domicilio'
+          ? 'Retiro en domicilio'
+          : 'Envío a domicilio';
       const pushSubtitle =
         created.paymentMethod === 'cash'
-          ? `Pago en efectivo al recibir (${formatCurrency(created.total)}). Seguimiento: ${created.trackingCode}`
+          ? `${deliveryTag} · Efectivo (${formatCurrency(created.total)}). Código: ${created.trackingCode}`
           : created.paymentMethod === 'transfer'
-            ? `Transferencia registrada (${formatCurrency(created.total)}). Seguimiento: ${created.trackingCode}`
-            : `Pago aprobado por ${formatCurrency(created.total)}. Seguimiento: ${created.trackingCode}`;
+            ? `${deliveryTag} · Transferencia (${formatCurrency(created.total)}). Código: ${created.trackingCode}`
+            : `${deliveryTag} · Pago aprobado (${formatCurrency(created.total)}). Código: ${created.trackingCode}`;
 
       sendBrowserPush(`Pedido ${created.orderNumber} confirmado`, pushSubtitle, created.id);
 
@@ -484,24 +506,46 @@ export function CheckoutModal({
                 <span className="font-medium text-zinc-900">{completedOrder.customerName}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-zinc-500">Dirección de entrega</span>
-                <span className="font-medium text-zinc-900 text-right">
-                  {completedOrder.shippingAddress}, {completedOrder.shippingCity} (
-                  {completedOrder.shippingPostalCode})
+                <span className="text-zinc-500">Modalidad de entrega</span>
+                <span className="font-medium text-zinc-900">
+                  {completedOrder.deliveryMethod === 'pickup' ||
+                  completedOrder.carrier === 'Retiro en domicilio'
+                    ? 'Retiro en domicilio (sin cargo)'
+                    : 'Envío a domicilio'}
                 </span>
               </div>
+              {!(
+                completedOrder.deliveryMethod === 'pickup' ||
+                completedOrder.carrier === 'Retiro en domicilio'
+              ) && (
+                <div className="flex justify-between gap-4">
+                  <span className="text-zinc-500 shrink-0">Dirección de entrega</span>
+                  <span className="font-medium text-zinc-900 text-right">
+                    {completedOrder.shippingAddress}, {completedOrder.shippingCity} (
+                    {completedOrder.shippingPostalCode})
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-zinc-500">Medio de pago</span>
                 <span className="font-medium text-zinc-900">
                   {completedOrder.paymentMethod === 'cash'
-                    ? 'Efectivo (al recibir o retirar)'
+                    ? completedOrder.deliveryMethod === 'pickup' ||
+                      completedOrder.carrier === 'Retiro en domicilio'
+                      ? 'Efectivo (al retirar en domicilio)'
+                      : 'Efectivo (al recibir en domicilio)'
                     : completedOrder.paymentMethod === 'transfer'
                       ? `${completedOrder.paymentBrand}${completedOrder.paymentReceipt ? ' · Comprobante adjunto' : ''}`
                       : `${completedOrder.paymentBrand} ···· ${completedOrder.paymentLast4}${completedOrder.installments > 1 ? ` (${completedOrder.installments} cuotas)` : ''}`}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-zinc-500">Entrega estimada</span>
+                <span className="text-zinc-500">
+                  {completedOrder.deliveryMethod === 'pickup' ||
+                  completedOrder.carrier === 'Retiro en domicilio'
+                    ? 'Coordinación de retiro'
+                    : 'Entrega estimada'}
+                </span>
                 <span className="font-medium text-zinc-900">{completedOrder.estimatedDelivery}</span>
               </div>
             </div>
@@ -573,8 +617,18 @@ export function CheckoutModal({
                 }}
                 className="flex-1 py-3 px-4 inline-flex items-center justify-center gap-2 text-sm font-medium text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors cursor-pointer"
               >
-                <Truck className="w-4 h-4" />
-                Seguir envío en vivo
+                {completedOrder.deliveryMethod === 'pickup' ||
+                completedOrder.carrier === 'Retiro en domicilio' ? (
+                  <>
+                    <Store className="w-4 h-4" />
+                    Ver estado del pedido
+                  </>
+                ) : (
+                  <>
+                    <Truck className="w-4 h-4" />
+                    Seguir envío en vivo
+                  </>
+                )}
               </button>
               <button
                 type="button"
@@ -598,7 +652,7 @@ export function CheckoutModal({
                     step === 'shipping' ? 'text-blue-700 font-semibold' : 'text-zinc-500'
                   }`}
                 >
-                  01. Datos de envío
+                  01. Entrega y contacto
                 </button>
                 <span className="text-zinc-300">/</span>
                 <span className={step === 'payment' ? 'text-blue-700 font-semibold' : 'text-zinc-400'}>
@@ -614,9 +668,85 @@ export function CheckoutModal({
 
               {step === 'shipping' ? (
                 <form onSubmit={handleContinueToPayment} className="space-y-4">
+                  {/* Delivery Method Selector */}
+                  <div>
+                    <p className="block text-xs font-medium text-zinc-700 mb-2">
+                      Modalidad de entrega
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDeliveryMethod('delivery');
+                          setErrorMessage('');
+                        }}
+                        className={`text-left p-3.5 rounded-xl border transition-all cursor-pointer ${
+                          deliveryMethod === 'delivery'
+                            ? 'border-blue-700 bg-blue-50/50 ring-1 ring-blue-700'
+                            : 'border-zinc-200 bg-white hover:border-zinc-400'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-950">
+                            <Truck
+                              className={`w-4 h-4 shrink-0 ${
+                                deliveryMethod === 'delivery' ? 'text-blue-700' : 'text-zinc-500'
+                              }`}
+                            />
+                            Envío a domicilio
+                          </span>
+                          <span
+                            className={`text-[11px] font-mono font-semibold ${
+                              standardDeliveryCost === 0 ? 'text-emerald-700' : 'text-zinc-700'
+                            }`}
+                          >
+                            {standardDeliveryCost === 0
+                              ? 'Sin cargo'
+                              : formatCurrency(standardDeliveryCost)}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-zinc-500 leading-snug">
+                          Recibí tu compra en la dirección que indiques.
+                        </p>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDeliveryMethod('pickup');
+                          setErrorMessage('');
+                        }}
+                        className={`text-left p-3.5 rounded-xl border transition-all cursor-pointer ${
+                          deliveryMethod === 'pickup'
+                            ? 'border-blue-700 bg-blue-50/50 ring-1 ring-blue-700'
+                            : 'border-zinc-200 bg-white hover:border-zinc-400'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-950">
+                            <Store
+                              className={`w-4 h-4 shrink-0 ${
+                                deliveryMethod === 'pickup' ? 'text-blue-700' : 'text-zinc-500'
+                              }`}
+                            />
+                            Retiro en domicilio
+                          </span>
+                          <span className="text-[11px] font-mono font-semibold text-emerald-700">
+                            Sin cargo
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-zinc-500 leading-snug">
+                          Coordiná día y horario para retirar personalmente.
+                        </p>
+                      </button>
+                    </div>
+                  </div>
+
                   <div>
                     <label className="block text-xs font-medium text-zinc-700 mb-1">
-                      Nombre y apellido del destinatario
+                      {isPickup
+                        ? 'Nombre y apellido de quien retira'
+                        : 'Nombre y apellido del destinatario'}
                     </label>
                     <input
                       type="text"
@@ -631,7 +761,9 @@ export function CheckoutModal({
 
                   <div>
                     <label className="block text-xs font-medium text-zinc-700 mb-1">
-                      Teléfono de contacto (para avisos de correo)
+                      {isPickup
+                        ? 'Teléfono de contacto (para coordinar el retiro)'
+                        : 'Teléfono de contacto (para avisos de correo)'}
                     </label>
                     <input
                       type="tel"
@@ -644,75 +776,100 @@ export function CheckoutModal({
                     />
                   </div>
 
+                  {isPickup ? (
+                    <div className="p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl flex items-start gap-2.5">
+                      <MapPin className="w-4 h-4 text-blue-700 shrink-0 mt-0.5" />
+                      <div className="text-xs text-zinc-600 leading-relaxed">
+                        <p className="font-semibold text-zinc-900 mb-0.5">
+                          Retiro en domicilio sin costo de envío
+                        </p>
+                        <p>
+                          Al confirmar tu pedido reservamos tus productos al instante y coordinamos
+                          el punto y horario de retiro al teléfono que ingresaste.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div>
+                        <label className="block text-xs font-medium text-zinc-700 mb-1">
+                          Dirección de entrega (calle, altura, piso/depto)
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          maxLength={200}
+                          value={shippingAddress}
+                          onChange={(e) => setShippingAddress(e.target.value)}
+                          placeholder="Av. Callao 1180, Piso 4B"
+                          className="w-full px-3 py-2.5 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-zinc-700 mb-1">
+                            Ciudad / Provincia
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            maxLength={80}
+                            value={shippingCity}
+                            onChange={(e) => setShippingCity(e.target.value)}
+                            placeholder="Buenos Aires"
+                            className="w-full px-3 py-2.5 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-zinc-700 mb-1">
+                            Código postal
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            maxLength={20}
+                            value={shippingPostalCode}
+                            onChange={(e) => setShippingPostalCode(e.target.value)}
+                            placeholder="C1023"
+                            className="w-full px-3 py-2.5 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700 font-mono"
+                          />
+                        </div>
+                      </div>
+                    </>
+                  )}
+
                   <div>
                     <label className="block text-xs font-medium text-zinc-700 mb-1">
-                      Dirección de entrega (calle, altura, piso/depto)
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      maxLength={200}
-                      value={shippingAddress}
-                      onChange={(e) => setShippingAddress(e.target.value)}
-                      placeholder="Av. Callao 1180, Piso 4B"
-                      className="w-full px-3 py-2.5 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-zinc-700 mb-1">
-                        Ciudad / Provincia
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        maxLength={80}
-                        value={shippingCity}
-                        onChange={(e) => setShippingCity(e.target.value)}
-                        placeholder="Buenos Aires"
-                        className="w-full px-3 py-2.5 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-zinc-700 mb-1">
-                        Código postal
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        maxLength={20}
-                        value={shippingPostalCode}
-                        onChange={(e) => setShippingPostalCode(e.target.value)}
-                        placeholder="C1023"
-                        className="w-full px-3 py-2.5 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700 font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-700 mb-1">
-                      Indicaciones para el repartidor (opcional)
+                      {isPickup
+                        ? 'Horario preferido o indicaciones para el retiro (opcional)'
+                        : 'Indicaciones para el repartidor (opcional)'}
                     </label>
                     <input
                       type="text"
                       maxLength={240}
                       value={shippingNotes}
                       onChange={(e) => setShippingNotes(e.target.value)}
-                      placeholder="Horario preferido, timbre o recepción"
+                      placeholder={
+                        isPickup
+                          ? 'Ej. Paso a retirar hoy después de las 17 hs'
+                          : 'Horario preferido, timbre o recepción'
+                      }
                       className="w-full px-3 py-2.5 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
                     />
                   </div>
 
-                  <label className="flex items-center gap-2 text-xs text-zinc-600 cursor-pointer pt-1">
-                    <input
-                      type="checkbox"
-                      checked={saveDefaultAddress}
-                      onChange={(e) => setSaveDefaultAddress(e.target.checked)}
-                      className="accent-blue-700 rounded"
-                    />
-                    Guardar como dirección predeterminada en mi cuenta
-                  </label>
+                  {!isPickup && (
+                    <label className="flex items-center gap-2 text-xs text-zinc-600 cursor-pointer pt-1">
+                      <input
+                        type="checkbox"
+                        checked={saveDefaultAddress}
+                        onChange={(e) => setSaveDefaultAddress(e.target.checked)}
+                        className="accent-blue-700 rounded"
+                      />
+                      Guardar como dirección predeterminada en mi cuenta
+                    </label>
+                  )}
 
                   <button
                     type="submit"
@@ -723,6 +880,29 @@ export function CheckoutModal({
                 </form>
               ) : (
                 <form onSubmit={handleConfirmPayment} className="space-y-4">
+                  {/* Selected Delivery Summary Bar */}
+                  <div className="flex items-center justify-between gap-2 px-3.5 py-2.5 bg-zinc-50 border border-zinc-200 rounded-lg text-xs">
+                    <div className="flex items-center gap-2 min-w-0">
+                      {isPickup ? (
+                        <Store className="w-4 h-4 text-blue-700 shrink-0" />
+                      ) : (
+                        <Truck className="w-4 h-4 text-blue-700 shrink-0" />
+                      )}
+                      <span className="font-medium text-zinc-900 truncate">
+                        {isPickup
+                          ? 'Retiro en domicilio · Sin cargo'
+                          : `Envío a domicilio · ${shippingAddress}, ${shippingCity}`}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setStep('shipping')}
+                      className="text-[11px] font-medium text-blue-700 hover:underline shrink-0 cursor-pointer"
+                    >
+                      Cambiar
+                    </button>
+                  </div>
+
                   {/* Payment Method Selector (Transferencia & Efectivo only) */}
                   <div className="grid grid-cols-2 gap-1.5 p-1 bg-zinc-100 rounded-lg">
                     {(
@@ -1060,11 +1240,14 @@ export function CheckoutModal({
                         </div>
                         <div>
                           <p className="text-sm font-semibold text-zinc-950">
-                            Pago en efectivo al recibir o retirar
+                            {isPickup
+                              ? 'Pago en efectivo al retirar en domicilio'
+                              : 'Pago en efectivo al recibir en tu domicilio'}
                           </p>
                           <p className="text-xs text-zinc-600 mt-0.5 leading-relaxed">
-                            Abonás en efectivo al momento de la entrega en tu domicilio o al retirar
-                            en nuestro depósito. Tu stock queda reservado de inmediato.
+                            {isPickup
+                              ? 'Abonás en efectivo al momento de retirar tu pedido. Tu stock queda reservado de inmediato.'
+                              : 'Abonás en efectivo al momento de recibir tu compra en el domicilio indicado. Tu stock queda reservado de inmediato.'}
                           </p>
                         </div>
                       </div>
@@ -1164,8 +1347,18 @@ export function CheckoutModal({
                     </div>
                   )}
                   <div className="flex justify-between text-zinc-600">
-                    <span>Envío</span>
-                    <span className="font-mono tabular-nums">
+                    <span>Modalidad</span>
+                    <span className="font-medium text-zinc-900">
+                      {isPickup ? 'Retiro en domicilio' : 'Envío a domicilio'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-zinc-600">
+                    <span>{isPickup ? 'Costo de retiro' : 'Envío'}</span>
+                    <span
+                      className={`font-mono tabular-nums ${
+                        shippingCost === 0 ? 'text-emerald-700 font-medium' : ''
+                      }`}
+                    >
                       {shippingCost === 0 ? 'Sin cargo' : formatCurrency(shippingCost)}
                     </span>
                   </div>

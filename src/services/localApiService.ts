@@ -8,6 +8,7 @@ import type {
   CategoryId,
   CloudflareTunnelStatus,
   DatabaseMode,
+  DeliveryMethod,
   LocalBackupSnapshotMeta,
   LocalServerInfo,
   NotificationType,
@@ -234,6 +235,7 @@ export async function localCreateOrder(input: {
   shippingCity: string;
   shippingPostalCode: string;
   shippingNotes: string;
+  deliveryMethod?: DeliveryMethod;
   subtotal: number;
   discount: number;
   shippingCost: number;

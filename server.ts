@@ -52,6 +52,7 @@ import {
   SHIPMENT_PIPELINE,
   type AppNotification,
   type CategoryId,
+  type DeliveryMethod,
   type NotificationType,
   type Order,
   type PaymentMethod,
@@ -1098,6 +1099,51 @@ app.post('/api/local/orders', async (req, res) => {
       return;
     }
 
+    const rawDeliveryMethod = body.deliveryMethod;
+    if (
+      rawDeliveryMethod !== undefined &&
+      rawDeliveryMethod !== 'delivery' &&
+      rawDeliveryMethod !== 'pickup'
+    ) {
+      res.status(400).json({ error: 'Modalidad de entrega inválida.' });
+      return;
+    }
+    const deliveryMethod: DeliveryMethod = rawDeliveryMethod === 'pickup' ? 'pickup' : 'delivery';
+    const isPickup = deliveryMethod === 'pickup';
+
+    const customerNameClean = clampString(String(body.customerName || ''), 100);
+    const shippingPhoneClean = clampString(String(body.shippingPhone || ''), 32);
+    if (customerNameClean.length < 2) {
+      res.status(400).json({ error: 'Ingresá tu nombre completo.' });
+      return;
+    }
+    if (shippingPhoneClean.length < 6) {
+      res.status(400).json({ error: 'Ingresá un teléfono de contacto válido.' });
+      return;
+    }
+
+    const resolvedShippingAddress = isPickup
+      ? 'Retiro en domicilio'
+      : clampString(String(body.shippingAddress || ''), 200);
+    const resolvedShippingCity = isPickup
+      ? 'Retiro personal'
+      : clampString(String(body.shippingCity || ''), 80);
+    const resolvedShippingPostalCode = isPickup
+      ? 'RET'
+      : clampString(String(body.shippingPostalCode || ''), 20);
+
+    if (
+      !isPickup &&
+      (resolvedShippingAddress.length < 4 ||
+        resolvedShippingCity.length < 2 ||
+        resolvedShippingPostalCode.length < 3)
+    ) {
+      res.status(400).json({
+        error: 'Completá dirección, ciudad y código postal para coordinar el envío a domicilio.',
+      });
+      return;
+    }
+
     const sanitizedReceipt =
       paymentMethod === 'transfer' && body.paymentReceipt
         ? sanitizePaymentReceipt(body.paymentReceipt)
@@ -1184,10 +1230,12 @@ app.post('/api/local/orders', async (req, res) => {
         note:
           paymentMethod === 'transfer'
             ? sanitizedReceipt
-              ? `Transferencia registrada con comprobante adjunto${sanitizedReceipt.operationNumber ? ` (Op. ${sanitizedReceipt.operationNumber})` : ''}. Reserva de inventario confirmada.`
-              : 'Transferencia registrada. Reserva de inventario confirmada.'
+              ? `Transferencia registrada con comprobante adjunto${sanitizedReceipt.operationNumber ? ` (Op. ${sanitizedReceipt.operationNumber})` : ''}. ${isPickup ? 'Modalidad: retiro en domicilio.' : 'Reserva de inventario confirmada.'}`
+              : `Transferencia registrada. ${isPickup ? 'Modalidad: retiro en domicilio.' : 'Reserva de inventario confirmada.'}`
             : paymentMethod === 'cash'
-              ? 'Pago en efectivo al recibir / retirar el pedido. Reserva de inventario confirmada.'
+              ? isPickup
+                ? 'Pago en efectivo al retirar en domicilio. Reserva de inventario confirmada.'
+                : 'Pago en efectivo al recibir el pedido en domicilio. Reserva de inventario confirmada.'
               : `Pago aprobado (${paymentBrand}${installments > 1 ? ` · ${installments} cuotas` : ''}).`,
         timestampIso: nowIso,
       };
@@ -1208,7 +1256,10 @@ app.post('/api/local/orders', async (req, res) => {
       const threshold = Math.max(0, db.shippingSettings.freeShippingThreshold);
       const baseShippingCost = Math.max(0, db.shippingSettings.standardShippingCost);
       const serverShippingCost =
-        hasFreeShippingProduct || threshold === 0 || serverSubtotal - serverDiscount >= threshold
+        isPickup ||
+        hasFreeShippingProduct ||
+        threshold === 0 ||
+        serverSubtotal - serverDiscount >= threshold
           ? 0
           : baseShippingCost;
       const serverTotal = Math.max(1, serverSubtotal - serverDiscount + serverShippingCost);
@@ -1218,13 +1269,14 @@ app.post('/api/local/orders', async (req, res) => {
         orderNumber,
         trackingCode,
         userId: session.uid,
-        customerName: clampString(String(body.customerName || 'Cliente'), 100),
+        customerName: customerNameClean,
         customerEmail: clampString(session.email, 120),
-        shippingPhone: clampString(String(body.shippingPhone || ''), 32),
-        shippingAddress: clampString(String(body.shippingAddress || ''), 200),
-        shippingCity: clampString(String(body.shippingCity || ''), 80),
-        shippingPostalCode: clampString(String(body.shippingPostalCode || ''), 20),
+        shippingPhone: shippingPhoneClean,
+        shippingAddress: resolvedShippingAddress,
+        shippingCity: resolvedShippingCity,
+        shippingPostalCode: resolvedShippingPostalCode,
         shippingNotes: clampString(String(body.shippingNotes || 'Sin indicaciones adicionales'), 240),
+        deliveryMethod,
         items: verifiedItems.map(({ product, qty, thumb }) => ({
           productId: product.id,
           name: product.name,
@@ -1245,9 +1297,11 @@ app.post('/api/local/orders', async (req, res) => {
         paymentStatus,
         ...(sanitizedReceipt ? { paymentReceipt: sanitizedReceipt } : {}),
         shipmentStatus: 'confirmed',
-        carrier: 'Infourqui Express Logística',
-        estimatedDelivery: '3 a 5 días hábiles',
-        currentLocation: 'Depósito Central — Reserva confirmada',
+        carrier: isPickup ? 'Retiro en domicilio' : 'Infourqui Express Logística',
+        estimatedDelivery: isPickup ? 'A coordinar por contacto' : '3 a 5 días hábiles',
+        currentLocation: isPickup
+          ? 'Listo para coordinar retiro en domicilio'
+          : 'Depósito Central — Reserva confirmada',
         trackingEvents: [initialEvent],
         createdAt: nowIso,
         updatedAt: nowIso,
@@ -1257,7 +1311,9 @@ app.post('/api/local/orders', async (req, res) => {
         id: notifId,
         userId: session.uid,
         title: `Pedido ${orderNumber} confirmado`,
-        message: `Tu compra fue procesada correctamente. Código de seguimiento: ${trackingCode}.`,
+        message: isPickup
+          ? `Tu compra con retiro en domicilio fue confirmada. Código: ${trackingCode}.`
+          : `Tu compra fue procesada correctamente. Código de seguimiento: ${trackingCode}.`,
         type: 'order',
         orderId,
         read: false,
@@ -2072,6 +2128,9 @@ function sanitizeBackupPayloadForLocalRestore(
         shippingCity: clampString(String(o.shippingCity || 'Local'), 80),
         shippingPostalCode: clampString(String(o.shippingPostalCode || '0000'), 20),
         shippingNotes: clampString(String(o.shippingNotes || ''), 240),
+        ...(o.deliveryMethod === 'pickup' || o.deliveryMethod === 'delivery'
+          ? { deliveryMethod: o.deliveryMethod }
+          : {}),
         items,
         subtotal: Math.max(0, Math.round(Number(o.subtotal) || Number(o.total))),
         discount: Math.max(0, Math.round(Number(o.discount) || 0)),

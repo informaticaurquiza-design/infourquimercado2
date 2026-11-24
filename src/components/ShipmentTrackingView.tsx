@@ -221,7 +221,9 @@ export function ShipmentTrackingView({
                     >
                       <span className="truncate pr-2">
                         {order.items.length} {order.items.length === 1 ? 'artículo' : 'artículos'} ·{' '}
-                        {order.shippingCity}
+                        {order.deliveryMethod === 'pickup' || order.carrier === 'Retiro en domicilio'
+                          ? 'Retiro en domicilio'
+                          : order.shippingCity}
                       </span>
                       <span className="font-mono font-medium tabular-nums shrink-0">
                         {formatCurrency(order.total)}
@@ -377,16 +379,33 @@ export function ShipmentTrackingView({
                     <span className="font-medium text-zinc-900">{activeOrder.customerName}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-zinc-500">Domicilio</span>
+                    <span className="text-zinc-500">Modalidad</span>
                     <span className="font-medium text-zinc-900 text-right">
-                      {activeOrder.shippingAddress}, {activeOrder.shippingCity}
+                      {activeOrder.deliveryMethod === 'pickup' ||
+                      activeOrder.carrier === 'Retiro en domicilio'
+                        ? 'Retiro en domicilio'
+                        : 'Envío a domicilio'}
                     </span>
                   </div>
+                  {!(
+                    activeOrder.deliveryMethod === 'pickup' ||
+                    activeOrder.carrier === 'Retiro en domicilio'
+                  ) && (
+                    <div className="flex justify-between gap-3">
+                      <span className="text-zinc-500 shrink-0">Domicilio</span>
+                      <span className="font-medium text-zinc-900 text-right">
+                        {activeOrder.shippingAddress}, {activeOrder.shippingCity}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <span className="text-zinc-500">Pago</span>
                     <span className="font-medium text-zinc-900 text-right">
                       {activeOrder.paymentMethod === 'cash'
-                        ? 'Efectivo (pago al recibir)'
+                        ? activeOrder.deliveryMethod === 'pickup' ||
+                          activeOrder.carrier === 'Retiro en domicilio'
+                          ? 'Efectivo (al retirar)'
+                          : 'Efectivo (pago al recibir)'
                         : activeOrder.paymentMethod === 'transfer'
                           ? `${activeOrder.paymentBrand}${activeOrder.paymentReceipt ? ' · Comprobante adjunto' : ''}`
                           : `${activeOrder.paymentBrand} ···· ${activeOrder.paymentLast4}`}
