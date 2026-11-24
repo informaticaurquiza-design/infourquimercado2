@@ -325,6 +325,10 @@ export async function createOrderWithInventoryUpdate(input: CheckoutOrderInput):
       price: item.price,
       quantity: item.quantity,
       imageUrl: await createCompactThumbnail(item.imageUrl, getDefaultCategoryImage(item.category)),
+      ...(item.sellerId && ID_PATTERN.test(item.sellerId.trim())
+        ? { sellerId: clampString(item.sellerId.trim(), 128) }
+        : {}),
+      ...(item.sellerName ? { sellerName: clampString(item.sellerName, 120) } : {}),
     })),
   );
 
@@ -377,10 +381,22 @@ export async function createOrderWithInventoryUpdate(input: CheckoutOrderInput):
   };
 
   try {
-    await runTransaction(db, async (transaction) => {
-      const productSnapshots: { ref: ReturnType<typeof doc>; currentStock: number; currentSold: number; qty: number; name: string }[] = [];
+    let persistedItems = compactOrderItems;
+    let persistedSellerIds: string[] = [];
 
-      for (const item of input.cartItems) {
+    await runTransaction(db, async (transaction) => {
+      const productSnapshots: {
+        ref: ReturnType<typeof doc>;
+        productId: string;
+        currentStock: number;
+        currentSold: number;
+        qty: number;
+        name: string;
+        sellerId?: string;
+        sellerName?: string;
+      }[] = [];
+
+      for (const item of input.cartItems.slice(0, 30)) {
         const productRef = doc(db, 'products', item.productId);
         const snap = await transaction.get(productRef);
         if (!snap.exists()) {
@@ -397,12 +413,50 @@ export async function createOrderWithInventoryUpdate(input: CheckoutOrderInput):
         }
         productSnapshots.push({
           ref: productRef,
+          productId: item.productId,
           currentStock: data.stock,
           currentSold: data.soldCount,
           qty: item.quantity,
           name: data.name,
+          sellerId:
+            typeof data.sellerId === 'string' && ID_PATTERN.test(data.sellerId.trim())
+              ? clampString(data.sellerId.trim(), 128)
+              : undefined,
+          sellerName:
+            typeof data.sellerName === 'string' && data.sellerName.trim()
+              ? clampString(data.sellerName.trim(), 120)
+              : undefined,
         });
       }
+
+      const sellerByProductId = new Map<string, { sellerId?: string; sellerName?: string }>();
+      for (const entry of productSnapshots) {
+        sellerByProductId.set(entry.productId, {
+          sellerId: entry.sellerId,
+          sellerName: entry.sellerName,
+        });
+      }
+
+      const sellerIdSet = new Set<string>();
+      persistedItems = compactOrderItems.map((it) => {
+        const authoritative = sellerByProductId.get(it.productId);
+        const finalSellerId = authoritative?.sellerId;
+        const finalSellerName = authoritative?.sellerName;
+        if (finalSellerId) {
+          sellerIdSet.add(finalSellerId);
+        }
+        return {
+          productId: it.productId,
+          name: it.name,
+          category: it.category,
+          price: it.price,
+          quantity: it.quantity,
+          imageUrl: it.imageUrl,
+          ...(finalSellerId ? { sellerId: finalSellerId } : {}),
+          ...(finalSellerName ? { sellerName: finalSellerName } : {}),
+        };
+      });
+      persistedSellerIds = Array.from(sellerIdSet).slice(0, 30);
 
       for (const entry of productSnapshots) {
         transaction.update(entry.ref, {
@@ -412,13 +466,19 @@ export async function createOrderWithInventoryUpdate(input: CheckoutOrderInput):
         });
       }
 
-      transaction.set(doc(db, 'orders', orderId), orderData);
+      transaction.set(doc(db, 'orders', orderId), {
+        ...orderData,
+        items: persistedItems,
+        sellerIds: persistedSellerIds,
+      });
       transaction.set(doc(db, 'notifications', notifId), notificationData);
     });
 
     return {
       id: orderId,
       ...orderData,
+      items: persistedItems,
+      sellerIds: persistedSellerIds,
       createdAt: nowIso,
       updatedAt: nowIso,
     };
@@ -950,12 +1010,31 @@ export async function lookupOrderByCode(code: string, userId: string, isAdmin: b
   if (!clean) return null;
   const field = clean.startsWith('TRK-') ? 'trackingCode' : 'orderNumber';
   try {
-    const constraints = isAdmin
-      ? [where(field, '==', clean), limit(1)]
-      : [where('userId', '==', userId), where(field, '==', clean), limit(1)];
-    const snap = await getDocs(query(collection(db, 'orders'), ...constraints));
-    if (snap.empty) return null;
-    const d = snap.docs[0];
+    if (isAdmin) {
+      const snap = await getDocs(query(collection(db, 'orders'), where(field, '==', clean), limit(1)));
+      if (snap.empty) return null;
+      const d = snap.docs[0];
+      return { id: d.id, ...(d.data() as Omit<Order, 'id'>) };
+    }
+
+    const buyerSnap = await getDocs(
+      query(collection(db, 'orders'), where('userId', '==', userId), where(field, '==', clean), limit(1)),
+    );
+    if (!buyerSnap.empty) {
+      const d = buyerSnap.docs[0];
+      return { id: d.id, ...(d.data() as Omit<Order, 'id'>) };
+    }
+
+    const sellerSnap = await getDocs(
+      query(
+        collection(db, 'orders'),
+        where('sellerIds', 'array-contains', userId),
+        where(field, '==', clean),
+        limit(1),
+      ),
+    );
+    if (sellerSnap.empty) return null;
+    const d = sellerSnap.docs[0];
     return { id: d.id, ...(d.data() as Omit<Order, 'id'>) };
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, 'orders');
@@ -1289,12 +1368,24 @@ export async function restoreCloudDatabaseBackup(
           : 'confirmed';
 
         const rawItems = Array.isArray(o.items) ? o.items.slice(0, 30) : [];
+        const restoredSellerIdSet = new Set<string>();
         const items = rawItems
           .filter((i): i is Record<string, unknown> => Boolean(i) && typeof i === 'object')
           .map((i) => {
             const cat = (Object.prototype.hasOwnProperty.call(CATEGORY_MAP, String(i.category))
               ? String(i.category)
               : 'tecnologia') as CategoryId;
+            const cleanItemSellerId =
+              typeof i.sellerId === 'string' && ID_PATTERN.test(i.sellerId.trim())
+                ? clampString(i.sellerId.trim(), 128)
+                : '';
+            const cleanItemSellerName =
+              typeof i.sellerName === 'string' && i.sellerName.trim()
+                ? clampString(i.sellerName.trim(), 120)
+                : '';
+            if (cleanItemSellerId) {
+              restoredSellerIdSet.add(cleanItemSellerId);
+            }
             return {
               productId: clampString(String(i.productId || 'prod'), 64),
               name: clampString(String(i.name || 'Producto'), 120),
@@ -1305,9 +1396,19 @@ export async function restoreCloudDatabaseBackup(
                 typeof i.imageUrl === 'string' && isValidImageSource(i.imageUrl)
                   ? i.imageUrl
                   : getDefaultCategoryImage(cat),
+              ...(cleanItemSellerId ? { sellerId: cleanItemSellerId } : {}),
+              ...(cleanItemSellerName ? { sellerName: cleanItemSellerName } : {}),
             };
           });
         if (items.length === 0) continue;
+        if (Array.isArray(o.sellerIds)) {
+          for (const rawSid of o.sellerIds.slice(0, 30)) {
+            if (typeof rawSid === 'string' && ID_PATTERN.test(rawSid.trim())) {
+              restoredSellerIdSet.add(clampString(rawSid.trim(), 128));
+            }
+          }
+        }
+        const restoredSellerIds = Array.from(restoredSellerIdSet).slice(0, 30);
 
         const rawEvents = Array.isArray(o.trackingEvents) ? o.trackingEvents.slice(-15) : [];
         const trackingEvents: TrackingEvent[] =
@@ -1362,6 +1463,7 @@ export async function restoreCloudDatabaseBackup(
           orderNumber,
           trackingCode,
           userId: finalUserId,
+          ...(restoredSellerIds.length > 0 ? { sellerIds: restoredSellerIds } : {}),
           customerName: customerName.length >= 2 ? customerName : 'Cliente',
           customerEmail: customerEmail.length >= 3 ? customerEmail : 'cliente@local',
           shippingPhone: shippingPhone.length >= 6 ? shippingPhone : '000000',

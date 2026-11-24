@@ -147,6 +147,10 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
+        "sellerIds": {
+          "type": "array",
+          "description": "Bounded list (max 30) of unique seller UIDs for products included in the order."
+        },
         "customerName": {
           "type": "string",
           "minLength": 2,

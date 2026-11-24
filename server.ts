@@ -936,11 +936,19 @@ app.get('/api/local/bootstrap', (req, res) => {
         )
   ).map(enrichProductWithSellerBank);
 
+  const productsById = new Map(db.products.map((p) => [p.id, p]));
   const orders = !session
     ? []
     : isAdmin
       ? [...db.orders]
-      : db.orders.filter((o) => o.userId === session.uid);
+      : db.orders.filter((o) => {
+          if (o.userId === session.uid) return true;
+          if (Array.isArray(o.sellerIds) && o.sellerIds.includes(session.uid)) return true;
+          return o.items.some((it) => {
+            const resolvedSellerId = it.sellerId || productsById.get(it.productId)?.sellerId;
+            return resolvedSellerId === session.uid;
+          });
+        });
 
   const notifications = !session
     ? []
@@ -1515,11 +1523,38 @@ app.post('/api/local/orders', async (req, res) => {
           : baseShippingCost;
       const serverTotal = Math.max(1, serverSubtotal - serverDiscount + serverShippingCost);
 
+      const sellerIdSet = new Set<string>();
+      const orderItems = verifiedItems.map(({ product, qty, thumb }) => {
+        const cleanSellerId =
+          typeof product.sellerId === 'string' && ID_PATTERN.test(product.sellerId.trim())
+            ? clampString(product.sellerId.trim(), 128)
+            : '';
+        const cleanSellerName =
+          typeof product.sellerName === 'string' && product.sellerName.trim()
+            ? clampString(product.sellerName.trim(), 120)
+            : '';
+        if (cleanSellerId) {
+          sellerIdSet.add(cleanSellerId);
+        }
+        return {
+          productId: product.id,
+          name: product.name,
+          category: product.category,
+          price: product.price,
+          quantity: qty,
+          imageUrl: thumb,
+          ...(cleanSellerId ? { sellerId: cleanSellerId } : {}),
+          ...(cleanSellerName ? { sellerName: cleanSellerName } : {}),
+        };
+      });
+      const orderSellerIds = Array.from(sellerIdSet).slice(0, 30);
+
       const order: Order = {
         id: orderId,
         orderNumber,
         trackingCode,
         userId: session.uid,
+        sellerIds: orderSellerIds,
         customerName: customerNameClean,
         customerEmail: clampString(session.email, 120),
         shippingPhone: shippingPhoneClean,
@@ -1528,14 +1563,7 @@ app.post('/api/local/orders', async (req, res) => {
         shippingPostalCode: resolvedShippingPostalCode,
         shippingNotes: clampString(String(body.shippingNotes || 'Sin indicaciones adicionales'), 240),
         deliveryMethod,
-        items: verifiedItems.map(({ product, qty, thumb }) => ({
-          productId: product.id,
-          name: product.name,
-          category: product.category,
-          price: product.price,
-          quantity: qty,
-          imageUrl: thumb,
-        })),
+        items: orderItems,
         subtotal: serverSubtotal,
         discount: serverDiscount,
         shippingCost: serverShippingCost,
@@ -1595,10 +1623,16 @@ app.get('/api/local/orders/lookup', (req, res) => {
   }
 
   const db = loadLocalDb();
+  const productsById = new Map(db.products.map((p) => [p.id, p]));
   const found = db.orders.find((o) => {
     const matchesCode = o.trackingCode.toUpperCase() === code || o.orderNumber.toUpperCase() === code;
     if (!matchesCode) return false;
-    return session.role === 'admin' || o.userId === session.uid;
+    if (session.role === 'admin' || o.userId === session.uid) return true;
+    if (Array.isArray(o.sellerIds) && o.sellerIds.includes(session.uid)) return true;
+    return o.items.some((it) => {
+      const resolvedSellerId = it.sellerId || productsById.get(it.productId)?.sellerId;
+      return resolvedSellerId === session.uid;
+    });
   });
 
   res.json({ order: found || null });

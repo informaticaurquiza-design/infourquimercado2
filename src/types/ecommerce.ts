@@ -211,6 +211,8 @@ export interface OrderItem {
   price: number;
   quantity: number;
   imageUrl: string;
+  sellerId?: string;
+  sellerName?: string;
 }
 
 export interface TrackingEvent {
@@ -226,6 +228,7 @@ export interface Order {
   orderNumber: string;
   trackingCode: string;
   userId: string;
+  sellerIds?: string[];
   customerName: string;
   customerEmail: string;
   shippingPhone: string;

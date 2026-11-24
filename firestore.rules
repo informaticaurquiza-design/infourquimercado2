@@ -220,7 +220,7 @@ service cloud.firestore {
         'currentLocation', 'trackingEvents', 'createdAt', 'updatedAt'
       ])
       && data.keys().hasOnly([
-        'orderNumber', 'trackingCode', 'userId', 'customerName', 'customerEmail',
+        'orderNumber', 'trackingCode', 'userId', 'sellerIds', 'customerName', 'customerEmail',
         'shippingPhone', 'shippingAddress', 'shippingCity', 'shippingPostalCode',
         'shippingNotes', 'deliveryMethod', 'items', 'subtotal', 'discount', 'shippingCost', 'total',
         'paymentMethod', 'paymentBrand', 'paymentLast4', 'installments', 'transactionId',
@@ -230,6 +230,7 @@ service cloud.firestore {
       && data.orderNumber is string && data.orderNumber.size() <= 24 && data.orderNumber.matches('^ALB-[0-9]{4}-[0-9]{4}$')
       && data.trackingCode is string && data.trackingCode.size() <= 24 && data.trackingCode.matches('^TRK-[A-Z0-9]{8}$')
       && isValidId(data.userId)
+      && (!('sellerIds' in data) || (data.sellerIds is list && data.sellerIds.size() <= 30 && (data.sellerIds.size() == 0 || isValidId(data.sellerIds[0]))))
       && data.customerName is string && data.customerName.size() >= 2 && data.customerName.size() <= 100
       && data.customerEmail is string && data.customerEmail.size() >= 3 && data.customerEmail.size() <= 120
       && data.shippingPhone is string && data.shippingPhone.size() >= 6 && data.shippingPhone.size() <= 32
@@ -395,8 +396,16 @@ service cloud.firestore {
 
     // --- Collection: orders ---
     match /orders/{orderId} {
-      allow get: if isValidId(orderId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isBootstrappedAdmin());
+      allow get: if isValidId(orderId) && isSignedIn() && (
+        existing().userId == request.auth.uid
+        || ('sellerIds' in existing() && existing().sellerIds is list && request.auth.uid in existing().sellerIds)
+        || isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        existing().userId == request.auth.uid
+        || request.auth.uid in existing().sellerIds
+        || isBootstrappedAdmin()
+      );
       allow create: if isValidId(orderId)
         && isVerifiedUser()
         && isValidOrder(incoming())

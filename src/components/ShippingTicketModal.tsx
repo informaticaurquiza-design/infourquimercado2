@@ -15,7 +15,7 @@ import {
   getShipmentStatusMeta,
   getVehicleTypeLabel,
 } from '../lib/validation';
-import type { Order, PaymentMethod, PaymentStatus } from '../types/ecommerce';
+import type { Order, OrderItem, PaymentMethod, PaymentStatus } from '../types/ecommerce';
 import { VehicleTypeIcon } from './DeliveryAgentsManagerModal';
 import { ProductImage } from './ProductImage';
 
@@ -52,13 +52,16 @@ export function getPaymentStatusLabel(status: PaymentStatus): string {
 
 interface ShippingTicketContentProps {
   order: Order;
+  items: OrderItem[];
 }
 
-function ShippingTicketContent({ order }: ShippingTicketContentProps) {
+function ShippingTicketContent({ order, items }: ShippingTicketContentProps) {
   const isPickup =
     order.deliveryMethod === 'pickup' || order.carrier === 'Retiro en domicilio';
   const statusMeta = getShipmentStatusMeta(order.shipmentStatus);
   const receipt = order.paymentReceipt;
+  const isPartialSellerOrder = items.length < order.items.length;
+  const sellerItemsSubtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
   return (
     <div className="bg-white text-zinc-950 p-6 sm:p-8 space-y-6">
@@ -94,12 +97,14 @@ function ShippingTicketContent({ order }: ShippingTicketContentProps) {
         <div className="flex items-center gap-2 mb-3">
           <Package className="w-4 h-4 text-zinc-700" />
           <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-800">
-            Productos del envío ({order.items.length})
+            {isPartialSellerOrder
+              ? `Tus artículos en este envío (${items.length})`
+              : `Productos del envío (${items.length})`}
           </h3>
         </div>
 
         <div className="border border-zinc-200 rounded-xl divide-y divide-zinc-200 overflow-hidden">
-          {order.items.map((item, idx) => (
+          {items.map((item, idx) => (
             <div
               key={`${item.productId}-${idx}`}
               className="p-3.5 flex items-center gap-3.5 bg-white"
@@ -132,26 +137,43 @@ function ShippingTicketContent({ order }: ShippingTicketContentProps) {
 
         {/* Amounts Summary */}
         <div className="mt-3 p-4 rounded-xl bg-zinc-50 border border-zinc-200 space-y-1.5 text-xs">
-          <div className="flex justify-between text-zinc-600">
-            <span>Subtotal de productos</span>
-            <span className="font-mono tabular-nums">{formatCurrency(order.subtotal)}</span>
-          </div>
-          {order.discount > 0 && (
-            <div className="flex justify-between text-emerald-700 font-medium">
-              <span>Descuento aplicado</span>
-              <span className="font-mono tabular-nums">-{formatCurrency(order.discount)}</span>
-            </div>
+          {isPartialSellerOrder ? (
+            <>
+              <div className="flex justify-between text-zinc-800 font-semibold">
+                <span>Subtotal de tus artículos</span>
+                <span className="font-mono tabular-nums">
+                  {formatCurrency(sellerItemsSubtotal)}
+                </span>
+              </div>
+              <div className="flex justify-between pt-2 mt-1 border-t border-zinc-300 text-sm font-bold text-zinc-950">
+                <span>Importe total del pedido</span>
+                <span className="font-mono tabular-nums">{formatCurrency(order.total)}</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex justify-between text-zinc-600">
+                <span>Subtotal de productos</span>
+                <span className="font-mono tabular-nums">{formatCurrency(order.subtotal)}</span>
+              </div>
+              {order.discount > 0 && (
+                <div className="flex justify-between text-emerald-700 font-medium">
+                  <span>Descuento aplicado</span>
+                  <span className="font-mono tabular-nums">-{formatCurrency(order.discount)}</span>
+                </div>
+              )}
+              <div className="flex justify-between text-zinc-600">
+                <span>Costo de envío</span>
+                <span className="font-mono tabular-nums">
+                  {order.shippingCost === 0 ? 'Gratis' : formatCurrency(order.shippingCost)}
+                </span>
+              </div>
+              <div className="flex justify-between pt-2 mt-1 border-t border-zinc-300 text-base font-bold text-zinc-950">
+                <span>Importe total</span>
+                <span className="font-mono tabular-nums">{formatCurrency(order.total)}</span>
+              </div>
+            </>
           )}
-          <div className="flex justify-between text-zinc-600">
-            <span>Costo de envío</span>
-            <span className="font-mono tabular-nums">
-              {order.shippingCost === 0 ? 'Gratis' : formatCurrency(order.shippingCost)}
-            </span>
-          </div>
-          <div className="flex justify-between pt-2 mt-1 border-t border-zinc-300 text-base font-bold text-zinc-950">
-            <span>Importe total</span>
-            <span className="font-mono tabular-nums">{formatCurrency(order.total)}</span>
-          </div>
         </div>
       </div>
 
@@ -337,19 +359,23 @@ function ShippingTicketContent({ order }: ShippingTicketContentProps) {
 
 interface ShippingTicketModalProps {
   order: Order | null;
+  sellerItems?: OrderItem[];
   onClose: () => void;
 }
 
-export function ShippingTicketModal({ order, onClose }: ShippingTicketModalProps) {
+export function ShippingTicketModal({ order, sellerItems, onClose }: ShippingTicketModalProps) {
+  const displayItems = sellerItems !== undefined ? sellerItems : order?.items ?? [];
+  const canRender = Boolean(order && displayItems.length > 0);
+
   useEffect(() => {
-    if (!order) return;
+    if (!canRender) return;
     document.body.classList.add('printing-shipping-ticket');
     return () => {
       document.body.classList.remove('printing-shipping-ticket');
     };
-  }, [order]);
+  }, [canRender]);
 
-  if (!order) return null;
+  if (!canRender || !order) return null;
 
   function handlePrint() {
     window.print();
@@ -393,7 +419,7 @@ export function ShippingTicketModal({ order, onClose }: ShippingTicketModalProps
 
           <div className="overflow-y-auto bg-zinc-100/80 p-4 sm:p-6">
             <div className="bg-white border border-zinc-200 rounded-xl shadow-sm overflow-hidden">
-              <ShippingTicketContent order={order} />
+              <ShippingTicketContent order={order} items={displayItems} />
             </div>
           </div>
         </div>
@@ -403,7 +429,7 @@ export function ShippingTicketModal({ order, onClose }: ShippingTicketModalProps
       {typeof document !== 'undefined' &&
         createPortal(
           <div id="shipping-ticket-print-root" className="hidden print:block bg-white">
-            <ShippingTicketContent order={order} />
+            <ShippingTicketContent order={order} items={displayItems} />
           </div>,
           document.body,
         )}

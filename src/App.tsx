@@ -575,30 +575,79 @@ function AppContent() {
     return () => unsubscribe();
   }, [dbMode, cloudAuthReady, cloudUser]);
 
-  // 3. Real-time Orders Listener (Cloud Mode only)
+  // 3. Real-time Orders Listener (Cloud Mode: Admin sees all; users see purchases + orders where they are seller)
   useEffect(() => {
-    if (dbMode !== 'cloud' || !cloudAuthReady || !cloudUser) return;
-    const ordersQuery = cloudIsAdmin
-      ? query(collection(db, 'orders'))
-      : query(collection(db, 'orders'), where('userId', '==', cloudUser.uid));
+    if (dbMode !== 'cloud' || !cloudAuthReady || !cloudUser) {
+      setCloudOrders([]);
+      return;
+    }
 
-    const unsubscribe = onSnapshot(
-      ordersQuery,
+    if (cloudIsAdmin) {
+      const unsubscribe = onSnapshot(
+        query(collection(db, 'orders')),
+        (snapshot) => {
+          const list = snapshot.docs
+            .map((d) => ({
+              id: d.id,
+              ...(d.data() as Omit<Order, 'id'>),
+            }))
+            .sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt));
+          setCloudOrders(list);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'orders');
+        },
+      );
+      return () => unsubscribe();
+    }
+
+    let buyerOrders: Order[] = [];
+    let sellerOrders: Order[] = [];
+
+    const mergeAndSet = () => {
+      const unique = new Map<string, Order>();
+      for (const order of [...buyerOrders, ...sellerOrders]) {
+        unique.set(order.id, order);
+      }
+      setCloudOrders(
+        Array.from(unique.values()).sort(
+          (a, b) => getMillis(b.createdAt) - getMillis(a.createdAt),
+        ),
+      );
+    };
+
+    const unsubBuyer = onSnapshot(
+      query(collection(db, 'orders'), where('userId', '==', cloudUser.uid)),
       (snapshot) => {
-        const list = snapshot.docs
-          .map((d) => ({
-            id: d.id,
-            ...(d.data() as Omit<Order, 'id'>),
-          }))
-          .sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt));
-        setCloudOrders(list);
+        buyerOrders = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<Order, 'id'>),
+        }));
+        mergeAndSet();
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, 'orders');
       },
     );
 
-    return () => unsubscribe();
+    const unsubSeller = onSnapshot(
+      query(collection(db, 'orders'), where('sellerIds', 'array-contains', cloudUser.uid)),
+      (snapshot) => {
+        sellerOrders = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<Order, 'id'>),
+        }));
+        mergeAndSet();
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'orders');
+      },
+    );
+
+    return () => {
+      unsubBuyer();
+      unsubSeller();
+    };
   }, [dbMode, cloudAuthReady, cloudUser, cloudIsAdmin]);
 
   // 4. Real-time Push Notifications Listeners (Cloud Mode only)
@@ -1398,6 +1447,7 @@ function AppContent() {
             user={activeUser}
             isAdmin={activeIsAdmin}
             orders={activeOrders}
+            products={activeProducts}
             deliveryAgents={activeDeliveryAgents}
             initialSelectedOrderId={trackedOrderId}
             onRequireSignIn={() => setAccountOpen(true)}
