@@ -531,16 +531,16 @@ export function ShipmentTrackingView({
                     <div className="flex items-start gap-3">
                       {firstItem && (
                         <div
-                          className={`relative w-14 h-14 rounded-lg overflow-hidden shrink-0 border ${
+                          className={`relative w-14 h-14 rounded-lg overflow-hidden shrink-0 border flex items-center justify-center ${
                             isSelected
                               ? 'border-zinc-800 bg-zinc-900'
-                              : 'border-zinc-200 bg-zinc-100'
+                              : 'border-zinc-200 bg-white'
                           }`}
                         >
                           <ProductImage
                             src={firstItem.imageUrl}
                             alt={firstItem.name}
-                            className="w-full h-full object-cover"
+                            className="w-full h-full object-contain object-center"
                           />
                           {extraItemsCount > 0 && (
                             <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-zinc-950/85 text-white leading-none">
@@ -1081,11 +1081,11 @@ export function ShipmentTrackingView({
                   <ul className="space-y-3">
                     {activeOrder.items.map((item, idx) => (
                       <li key={`${item.productId}-${idx}`} className="flex items-center gap-3">
-                        <div className="w-12 h-10 rounded-md overflow-hidden bg-zinc-100 shrink-0">
+                        <div className="w-12 h-10 rounded-md overflow-hidden bg-zinc-50 border border-zinc-200 shrink-0 flex items-center justify-center">
                           <ProductImage
                             src={item.imageUrl}
                             alt={item.name}
-                            className="w-full h-full object-cover"
+                            className="w-full h-full object-contain object-center"
                           />
                         </div>
                         <div className="min-w-0 flex-1">

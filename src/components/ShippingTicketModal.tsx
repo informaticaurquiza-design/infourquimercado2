@@ -109,11 +109,11 @@ function ShippingTicketContent({ order, items }: ShippingTicketContentProps) {
               key={`${item.productId}-${idx}`}
               className="p-3.5 flex items-center gap-3.5 bg-white"
             >
-              <div className="w-16 h-16 rounded-lg overflow-hidden bg-zinc-100 border border-zinc-200 shrink-0">
+              <div className="w-16 h-16 rounded-lg overflow-hidden bg-white border border-zinc-200 shrink-0 flex items-center justify-center">
                 <ProductImage
                   src={item.imageUrl}
                   alt={item.name}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-contain object-center"
                 />
               </div>
               <div className="min-w-0 flex-1">

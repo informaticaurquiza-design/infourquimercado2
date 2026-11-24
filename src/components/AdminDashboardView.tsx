@@ -1212,11 +1212,11 @@ export function AdminDashboardView({
                       <tr key={p.id} className="hover:bg-zinc-50/70">
                         <td className="py-2.5 px-4 max-w-[280px]">
                           <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-11 h-9 rounded-md overflow-hidden bg-zinc-100 border border-zinc-200 shrink-0">
+                            <div className="w-11 h-9 rounded-md overflow-hidden bg-white border border-zinc-200 shrink-0 flex items-center justify-center">
                               <ProductImage
                                 src={p.imageUrl}
                                 alt={p.name}
-                                className="w-full h-full object-cover"
+                                className="w-full h-full object-contain object-center"
                               />
                             </div>
                             <span className="font-medium text-zinc-950 truncate">{p.name}</span>
@@ -1452,11 +1452,11 @@ export function AdminDashboardView({
                       <tr key={product.id} className="hover:bg-zinc-50/80">
                         <td className="py-2.5 px-4 max-w-[320px]">
                           <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-14 h-11 rounded-md overflow-hidden bg-zinc-100 border border-zinc-200 shrink-0">
+                            <div className="w-14 h-11 rounded-md overflow-hidden bg-white border border-zinc-200 shrink-0 flex items-center justify-center">
                               <ProductImage
                                 src={product.imageUrl}
                                 alt={product.name}
-                                className="w-full h-full object-cover"
+                                className="w-full h-full object-contain object-center"
                               />
                             </div>
                             <div className="min-w-0">

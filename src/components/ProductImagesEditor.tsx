@@ -203,11 +203,11 @@ export function ProductImagesEditor({
             key={`${idx}-${src.slice(0, 32)}`}
             className="border border-zinc-200 rounded-lg overflow-hidden bg-white flex flex-col"
           >
-            <div className="aspect-[4/3] bg-zinc-100 overflow-hidden">
+            <div className="aspect-[4/3] bg-zinc-50 overflow-hidden flex items-center justify-center">
               <ProductImage
                 src={src}
                 alt={`${productName || 'Producto'} — foto ${idx + 1}`}
-                className="w-full h-full object-cover"
+                className="w-full h-full object-contain object-center"
               />
             </div>
             <div className="px-2 py-1.5 border-t border-zinc-100 flex items-center justify-between gap-1 bg-zinc-50/70">
@@ -273,11 +273,11 @@ export function ProductImagesEditor({
 
       {images.length === 0 && (
         <div className="flex items-center gap-3 p-2.5 bg-zinc-50 border border-zinc-200 rounded-lg">
-          <div className="w-12 h-9 rounded overflow-hidden bg-zinc-100 border border-zinc-200 shrink-0">
+          <div className="w-12 h-9 rounded overflow-hidden bg-white border border-zinc-200 shrink-0 flex items-center justify-center">
             <ProductImage
               src={defaultCategoryImage}
               alt="Foto predeterminada del rubro"
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain object-center"
             />
           </div>
           <p className="text-[11px] text-zinc-500 leading-snug">

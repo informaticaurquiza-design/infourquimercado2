@@ -543,6 +543,7 @@ export function StorefrontView({
                     <ProductImage
                       src={slide.src}
                       alt={slide.alt}
+                      fit="cover"
                       className="w-full h-full object-cover"
                     />
                   </div>
@@ -754,12 +755,12 @@ export function StorefrontView({
                     <button
                       type="button"
                       onClick={() => openProductDetail(product)}
-                      className="block relative aspect-[4/3] bg-zinc-100 overflow-hidden text-left cursor-pointer"
+                      className="flex items-center justify-center relative w-full aspect-[4/3] bg-zinc-50 border-b border-zinc-100 overflow-hidden text-left cursor-pointer"
                     >
                       <ProductImage
                         src={product.imageUrl}
                         alt={product.name}
-                        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                        className="w-full h-full object-contain object-center transition-transform duration-300 group-hover:scale-[1.03]"
                       />
                     </button>
 
@@ -946,12 +947,12 @@ export function StorefrontView({
                 const activeSrc = gallery[safeIndex] || liveSelectedProduct.imageUrl;
 
                 return (
-                  <div className="bg-zinc-50 border-b md:border-b-0 md:border-r border-zinc-200 flex flex-col justify-between">
-                    <div className="relative aspect-[4/3] bg-zinc-100 overflow-hidden flex-1">
+                  <div className="bg-white border-b md:border-b-0 md:border-r border-zinc-200 flex flex-col justify-between">
+                    <div className="relative w-full aspect-[4/3] md:aspect-auto md:min-h-[340px] md:flex-1 bg-zinc-50 flex items-center justify-center p-3 overflow-hidden">
                       <ProductImage
                         src={activeSrc}
                         alt={`${liveSelectedProduct.name} — foto ${safeIndex + 1}`}
-                        className="w-full h-full object-cover"
+                        className="w-full h-full max-h-[420px] object-contain object-center"
                       />
 
                       {gallery.length > 1 && (
@@ -997,7 +998,7 @@ export function StorefrontView({
                               type="button"
                               onClick={() => setDetailImageIndex(idx)}
                               aria-label={`Ver foto ${idx + 1}`}
-                              className={`aspect-[4/3] rounded-md overflow-hidden border-2 transition-colors cursor-pointer bg-zinc-100 ${
+                              className={`aspect-[4/3] rounded-md overflow-hidden border-2 transition-colors cursor-pointer bg-zinc-50 flex items-center justify-center ${
                                 idx === safeIndex
                                   ? 'border-blue-700'
                                   : 'border-transparent hover:border-zinc-300'
@@ -1006,7 +1007,7 @@ export function StorefrontView({
                               <ProductImage
                                 src={thumbSrc}
                                 alt={`${liveSelectedProduct.name} miniatura ${idx + 1}`}
-                                className="w-full h-full object-cover"
+                                className="w-full h-full object-contain object-center"
                               />
                             </button>
                           ))}

@@ -63,6 +63,7 @@ interface WorkingImageState {
 
 export function ImageCropModal({ open, sourceSrc, onCancel, onApply }: ImageCropModalProps) {
   const [aspectId, setAspectId] = useState<AspectPresetId>('4:3');
+  const [fitMode, setFitMode] = useState<'contain' | 'cover'>('contain');
   const [rotationDeg, setRotationDeg] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -84,6 +85,7 @@ export function ImageCropModal({ open, sourceSrc, onCancel, onApply }: ImageCrop
   useEffect(() => {
     if (!open) return;
     setAspectId('4:3');
+    setFitMode('contain');
     setRotationDeg(0);
     setZoom(1);
     setOffset({ x: 0, y: 0 });
@@ -138,8 +140,10 @@ export function ImageCropModal({ open, sourceSrc, onCancel, onApply }: ImageCrop
 
   const baseScale = useMemo(() => {
     if (!working) return 1;
-    return Math.max(frameSize.width / working.width, frameSize.height / working.height);
-  }, [working, frameSize]);
+    return fitMode === 'contain'
+      ? Math.min(frameSize.width / working.width, frameSize.height / working.height)
+      : Math.max(frameSize.width / working.width, frameSize.height / working.height);
+  }, [working, frameSize, fitMode]);
 
   const renderWidth = working ? working.width * baseScale * zoom : 0;
   const renderHeight = working ? working.height * baseScale * zoom : 0;
@@ -156,11 +160,11 @@ export function ImageCropModal({ open, sourceSrc, onCancel, onApply }: ImageCrop
     };
   }
 
-  // Keep pan offset clamped whenever zoom or frame size changes
+  // Keep pan offset clamped whenever zoom, fitMode, or frame size changes
   useEffect(() => {
     setOffset((curr) => clampOffset(curr.x, curr.y, zoom));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zoom, frameSize.width, frameSize.height, working]);
+  }, [zoom, fitMode, frameSize.width, frameSize.height, working]);
 
   function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
     if (!working) return;
@@ -235,6 +239,12 @@ export function ImageCropModal({ open, sourceSrc, onCancel, onApply }: ImageCrop
         sh,
         targetWidth: preset.targetWidth,
         targetHeight: preset.targetHeight,
+        framePlacement: {
+          relX: imgLeft / Math.max(1, frameSize.width),
+          relY: imgTop / Math.max(1, frameSize.height),
+          relW: renderWidth / Math.max(1, frameSize.width),
+          relH: renderHeight / Math.max(1, frameSize.height),
+        },
       });
 
       onApply(exported.dataUrl);
@@ -304,7 +314,39 @@ export function ImageCropModal({ open, sourceSrc, onCancel, onApply }: ImageCrop
               ))}
             </div>
 
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <div className="inline-flex items-center gap-0.5 p-0.5 bg-zinc-100 rounded-lg">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFitMode('contain');
+                    setZoom(1);
+                    setOffset({ x: 0, y: 0 });
+                  }}
+                  className={`px-2 py-1 text-[11px] font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+                    fitMode === 'contain'
+                      ? 'bg-white text-zinc-950 shadow-sm'
+                      : 'text-zinc-600 hover:text-zinc-950'
+                  }`}
+                >
+                  Ajustar completa
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFitMode('cover');
+                    setZoom(1);
+                    setOffset({ x: 0, y: 0 });
+                  }}
+                  className={`px-2 py-1 text-[11px] font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+                    fitMode === 'cover'
+                      ? 'bg-white text-zinc-950 shadow-sm'
+                      : 'text-zinc-600 hover:text-zinc-950'
+                  }`}
+                >
+                  Llenar marco
+                </button>
+              </div>
               <button
                 type="button"
                 onClick={() => setRotationDeg((deg) => (deg + 90) % 360)}
@@ -339,10 +381,10 @@ export function ImageCropModal({ open, sourceSrc, onCancel, onApply }: ImageCrop
               onWheel={handleWheel}
               className={`relative w-full ${
                 aspectId === '1:1' ? 'max-w-[320px]' : 'max-w-[440px]'
-              } ${preset.aspectClass} overflow-hidden rounded-lg bg-zinc-900 border-2 border-white/90 shadow-lg select-none touch-none cursor-grab active:cursor-grabbing`}
+              } ${preset.aspectClass} overflow-hidden rounded-lg bg-white border-2 border-white/90 shadow-lg select-none touch-none cursor-grab active:cursor-grabbing`}
             >
               {loading ? (
-                <div className="absolute inset-0 flex items-center justify-center text-xs text-zinc-300">
+                <div className="absolute inset-0 flex items-center justify-center text-xs text-zinc-500">
                   Preparando imagen...
                 </div>
               ) : working ? (

@@ -120,12 +120,53 @@ export function exportCroppedImage(params: {
   targetWidth: number;
   targetHeight: number;
   maxChars?: number;
+  framePlacement?: {
+    relX: number;
+    relY: number;
+    relW: number;
+    relH: number;
+  };
 }): { dataUrl: string; width: number; height: number; approxKb: number } {
   const maxChars = params.maxChars ?? 135000;
   let width = Math.max(120, Math.round(params.targetWidth));
   let height = Math.max(90, Math.round(params.targetHeight));
 
   const qualities = [0.84, 0.76, 0.68, 0.6, 0.52];
+  const srcFullW = params.sourceImg.naturalWidth || params.sourceImg.width;
+  const srcFullH = params.sourceImg.naturalHeight || params.sourceImg.height;
+
+  const drawOntoCanvas = (ctx: CanvasRenderingContext2D, dstW: number, dstH: number) => {
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, dstW, dstH);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    if (params.framePlacement) {
+      const { relX, relY, relW, relH } = params.framePlacement;
+      ctx.drawImage(
+        params.sourceImg,
+        0,
+        0,
+        srcFullW,
+        srcFullH,
+        relX * dstW,
+        relY * dstH,
+        relW * dstW,
+        relH * dstH,
+      );
+    } else {
+      ctx.drawImage(
+        params.sourceImg,
+        params.sx,
+        params.sy,
+        params.sw,
+        params.sh,
+        0,
+        0,
+        dstW,
+        dstH,
+      );
+    }
+  };
 
   for (let pass = 0; pass < 3; pass += 1) {
     const canvas = document.createElement('canvas');
@@ -136,21 +177,7 @@ export function exportCroppedImage(params: {
       throw new Error('No se pudo inicializar el editor de recorte.');
     }
 
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, width, height);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(
-      params.sourceImg,
-      params.sx,
-      params.sy,
-      params.sw,
-      params.sh,
-      0,
-      0,
-      width,
-      height,
-    );
+    drawOntoCanvas(ctx, width, height);
 
     for (const q of qualities) {
       const dataUrl = canvas.toDataURL('image/jpeg', q);
@@ -176,19 +203,7 @@ export function exportCroppedImage(params: {
   if (!fCtx) {
     throw new Error('No se pudo exportar la imagen recortada.');
   }
-  fCtx.fillStyle = '#FFFFFF';
-  fCtx.fillRect(0, 0, fallbackCanvas.width, fallbackCanvas.height);
-  fCtx.drawImage(
-    params.sourceImg,
-    params.sx,
-    params.sy,
-    params.sw,
-    params.sh,
-    0,
-    0,
-    fallbackCanvas.width,
-    fallbackCanvas.height,
-  );
+  drawOntoCanvas(fCtx, fallbackCanvas.width, fallbackCanvas.height);
   const dataUrl = fallbackCanvas.toDataURL('image/jpeg', 0.5);
   return {
     dataUrl,
@@ -223,22 +238,16 @@ export async function createCompactThumbnail(
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(0, 0, outW, outH);
 
-    // Center-crop cover into 4:3 thumbnail
-    const imgRatio = img.naturalWidth / Math.max(1, img.naturalHeight);
-    const targetRatio = outW / outH;
-    let sx = 0;
-    let sy = 0;
-    let sw = img.naturalWidth;
-    let sh = img.naturalHeight;
-    if (imgRatio > targetRatio) {
-      sw = img.naturalHeight * targetRatio;
-      sx = (img.naturalWidth - sw) / 2;
-    } else {
-      sh = img.naturalWidth / targetRatio;
-      sy = (img.naturalHeight - sh) / 2;
-    }
-    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
-    const thumb = canvas.toDataURL('image/jpeg', 0.7);
+    // Proportionally fit entire product inside 4:3 thumbnail without cropping
+    const natW = Math.max(1, img.naturalWidth || img.width);
+    const natH = Math.max(1, img.naturalHeight || img.height);
+    const scale = Math.min(outW / natW, outH / natH);
+    const drawW = natW * scale;
+    const drawH = natH * scale;
+    const dx = (outW - drawW) / 2;
+    const dy = (outH - drawH) / 2;
+    ctx.drawImage(img, 0, 0, natW, natH, dx, dy, drawW, drawH);
+    const thumb = canvas.toDataURL('image/jpeg', 0.72);
     return thumb.length <= 16000 ? thumb : fallbackUrl;
   } catch {
     return fallbackUrl;

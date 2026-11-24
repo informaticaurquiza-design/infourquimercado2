@@ -187,11 +187,11 @@ export function CartDrawer({
             <ul className="divide-y divide-zinc-200">
               {items.map((item) => (
                 <li key={item.productId} className="py-4 flex gap-4">
-                  <div className="w-20 h-16 rounded-lg overflow-hidden bg-zinc-100 shrink-0">
+                  <div className="w-20 h-16 rounded-lg overflow-hidden bg-zinc-50 border border-zinc-200 shrink-0 flex items-center justify-center">
                     <ProductImage
                       src={item.imageUrl}
                       alt={item.name}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-contain object-center"
                     />
                   </div>
                   <div className="flex-1 min-w-0">

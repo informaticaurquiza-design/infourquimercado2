@@ -255,11 +255,11 @@ export function FacebookShareModal({
         <div className="p-5 overflow-y-auto space-y-4">
           {/* Facebook Post Preview Card */}
           <div className="border border-zinc-200 rounded-xl overflow-hidden bg-zinc-50">
-            <div className="relative aspect-[16/10] bg-zinc-100 overflow-hidden">
+            <div className="relative aspect-[16/10] bg-zinc-50 overflow-hidden flex items-center justify-center">
               <ProductImage
                 src={selectedPhotoSrc}
                 alt={product.name}
-                className="w-full h-full object-cover"
+                className="w-full h-full object-contain object-center"
               />
               <span className="absolute top-2.5 left-2.5 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-zinc-950/75 text-white">
                 <ImageIcon className="w-3 h-3" />
@@ -298,7 +298,7 @@ export function FacebookShareModal({
                       key={`${product.id}-thumb-${idx}`}
                       type="button"
                       onClick={() => setSelectedPhotoIndex(idx)}
-                      className={`relative aspect-[4/3] rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
+                      className={`relative aspect-[4/3] rounded-lg overflow-hidden border-2 transition-all cursor-pointer bg-white flex items-center justify-center ${
                         active
                           ? 'border-blue-600 ring-2 ring-blue-600/20'
                           : 'border-zinc-200 hover:border-zinc-400 opacity-80 hover:opacity-100'
@@ -307,7 +307,7 @@ export function FacebookShareModal({
                       <ProductImage
                         src={imgSrc}
                         alt={`${product.name} — foto ${idx + 1}`}
-                        className="w-full h-full object-cover"
+                        className="w-full h-full object-contain object-center"
                       />
                     </button>
                   );
