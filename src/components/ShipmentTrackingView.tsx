@@ -1,13 +1,101 @@
 import { useEffect, useState } from 'react';
-import { Check, FileCheck2, MapPin, Package, Search, Truck, X, XCircle } from 'lucide-react';
+import {
+  ArrowRight,
+  Check,
+  Edit3,
+  FileCheck2,
+  MapPin,
+  Package,
+  Search,
+  Truck,
+  X,
+  XCircle,
+} from 'lucide-react';
 import {
   formatCurrency,
   formatDateTime,
+  getNextShipmentStatus,
   getShipmentStatusMeta,
 } from '../lib/validation';
-import { cancelCustomerOrder, lookupOrderByCode } from '../services/dataService';
-import { SHIPMENT_PIPELINE, type AppUser, type Order } from '../types/ecommerce';
+import {
+  advanceOrderShipmentStatus,
+  cancelCustomerOrder,
+  lookupOrderByCode,
+} from '../services/dataService';
+import {
+  SHIPMENT_PIPELINE,
+  type AppUser,
+  type Order,
+  type ShipmentStatus,
+} from '../types/ecommerce';
 import { ProductImage } from './ProductImage';
+
+function getDefaultAdvanceDetails(
+  order: Order,
+  nextStatus: ShipmentStatus,
+): { location: string; note: string } {
+  const isPickup =
+    order.deliveryMethod === 'pickup' || order.carrier === 'Retiro en domicilio';
+
+  if (isPickup) {
+    switch (nextStatus) {
+      case 'preparing':
+        return {
+          location: 'Local Infourqui Mercado — Armado de pedido',
+          note: 'Estamos preparando tu pedido para retiro en domicilio.',
+        };
+      case 'in_transit':
+        return {
+          location: 'Punto de Retiro Infourqui Mercado',
+          note: 'Pedido empaquetado y listo en el mostrador de entregas.',
+        };
+      case 'out_for_delivery':
+        return {
+          location: 'Punto de Retiro — Disponible para retirar',
+          note: 'Tu pedido ya se encuentra listo para retirar en domicilio.',
+        };
+      case 'delivered':
+        return {
+          location: 'Retirado en domicilio',
+          note: 'Pedido retirado conforme por el cliente.',
+        };
+      default:
+        return {
+          location: 'Plataforma Infourqui Mercado',
+          note: 'Actualización de estado del pedido.',
+        };
+    }
+  }
+
+  const citySuffix = order.shippingCity ? ` — ${order.shippingCity}` : '';
+  switch (nextStatus) {
+    case 'preparing':
+      return {
+        location: 'Depósito Central Barracas',
+        note: 'Pedido en preparación y embalaje en depósito.',
+      };
+    case 'in_transit':
+      return {
+        location: 'Centro de Clasificación Norte — Pacheco',
+        note: 'Despachado en tránsito hacia el centro de distribución de destino.',
+      };
+    case 'out_for_delivery':
+      return {
+        location: `Sucursal de Reparto Local${citySuffix}`,
+        note: 'En vehículo de reparto rumbo al domicilio del destinatario.',
+      };
+    case 'delivered':
+      return {
+        location: `Domicilio del destinatario${citySuffix}`,
+        note: 'Paquete entregado y recibido conforme.',
+      };
+    default:
+      return {
+        location: 'Plataforma Infourqui Mercado',
+        note: 'Actualización logística del envío.',
+      };
+  }
+}
 
 interface ShipmentTrackingViewProps {
   user: AppUser | null;
@@ -33,6 +121,11 @@ export function ShipmentTrackingView({
   const [searching, setSearching] = useState(false);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [receiptLightboxOpen, setReceiptLightboxOpen] = useState(false);
+  const [advancing, setAdvancing] = useState(false);
+  const [advanceError, setAdvanceError] = useState('');
+  const [showCustomAdvance, setShowCustomAdvance] = useState(false);
+  const [customLocation, setCustomLocation] = useState('');
+  const [customNote, setCustomNote] = useState('');
 
   useEffect(() => {
     if (initialSelectedOrderId) {
@@ -45,6 +138,26 @@ export function ShipmentTrackingView({
     lookupResult ||
     orders.find((o) => o.id === selectedOrderId) ||
     (orders.length > 0 ? orders[0] : null);
+
+  const nextShipmentStatus = activeOrder
+    ? getNextShipmentStatus(activeOrder.shipmentStatus)
+    : null;
+  const nextStageMeta = nextShipmentStatus
+    ? getShipmentStatusMeta(nextShipmentStatus)
+    : null;
+
+  useEffect(() => {
+    setAdvanceError('');
+    setShowCustomAdvance(false);
+    if (activeOrder && nextShipmentStatus) {
+      const defaults = getDefaultAdvanceDetails(activeOrder, nextShipmentStatus);
+      setCustomLocation(defaults.location);
+      setCustomNote(defaults.note);
+    } else {
+      setCustomLocation('');
+      setCustomNote('');
+    }
+  }, [activeOrder?.id, activeOrder?.shipmentStatus, nextShipmentStatus]);
 
   async function handleCodeLookup(e: React.FormEvent) {
     e.preventDefault();
@@ -90,6 +203,43 @@ export function ShipmentTrackingView({
       onNotifyToast(`El pedido ${order.orderNumber} fue cancelado.`);
     } finally {
       setCancellingId(null);
+    }
+  }
+
+  async function handleAdvanceNextStage() {
+    if (!activeOrder || !nextShipmentStatus || !isAdmin || advancing) return;
+    setAdvanceError('');
+    setAdvancing(true);
+    try {
+      const defaults = getDefaultAdvanceDetails(activeOrder, nextShipmentStatus);
+      const location = (showCustomAdvance ? customLocation.trim() : '') || defaults.location;
+      const note = (showCustomAdvance ? customNote.trim() : '') || defaults.note;
+
+      await advanceOrderShipmentStatus(activeOrder, nextShipmentStatus, location, note);
+
+      if (lookupResult && user) {
+        if (orders.some((o) => o.id === activeOrder.id)) {
+          setLookupResult(null);
+        } else {
+          const refreshed = await lookupOrderByCode(activeOrder.trackingCode, user.uid, isAdmin);
+          if (refreshed) setLookupResult(refreshed);
+        }
+      }
+
+      const stageMeta = getShipmentStatusMeta(nextShipmentStatus);
+      setShowCustomAdvance(false);
+      onNotifyToast(
+        `Seguimiento ${activeOrder.orderNumber} avanzado a "${stageMeta.label}".`,
+      );
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'No pudimos avanzar al próximo seguimiento en este momento.';
+      setAdvanceError(msg);
+      onNotifyToast(msg);
+    } finally {
+      setAdvancing(false);
     }
   }
 
@@ -319,9 +469,107 @@ export function ShipmentTrackingView({
 
               {/* Chronological Tracking Log */}
               <div>
-                <h3 className="text-sm font-semibold text-zinc-950 mb-4">
-                  Historial de movimientos
-                </h3>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-zinc-950">
+                      Historial de movimientos
+                    </h3>
+                    {isAdmin && nextStageMeta && (
+                      <p className="text-xs text-zinc-500 mt-0.5">
+                        Siguiente etapa:{' '}
+                        <span className="font-medium text-zinc-800">{nextStageMeta.label}</span>
+                      </p>
+                    )}
+                  </div>
+
+                  {isAdmin && nextShipmentStatus && nextStageMeta && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowCustomAdvance((v) => !v)}
+                        disabled={advancing}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-zinc-700 bg-zinc-100 hover:bg-zinc-200 disabled:opacity-50 rounded-lg transition-colors cursor-pointer"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        {showCustomAdvance ? 'Ocultar detalle' : 'Editar detalle'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={advancing}
+                        onClick={() => void handleAdvanceNextStage()}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-55 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                      >
+                        <span>
+                          {advancing ? 'Avanzando...' : 'Próximo seguimiento'}
+                        </span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {isAdmin && nextShipmentStatus && nextStageMeta && showCustomAdvance && (
+                  <div className="mb-5 p-4 rounded-xl bg-zinc-50 border border-zinc-200 space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label
+                          htmlFor="next-tracking-location"
+                          className="block text-[11px] font-semibold text-zinc-700 mb-1"
+                        >
+                          Ubicación del nuevo movimiento
+                        </label>
+                        <input
+                          id="next-tracking-location"
+                          type="text"
+                          value={customLocation}
+                          onChange={(e) => setCustomLocation(e.target.value)}
+                          maxLength={120}
+                          placeholder="Ej. Sucursal de Reparto Local"
+                          className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                        />
+                      </div>
+                      <div>
+                        <label
+                          htmlFor="next-tracking-note"
+                          className="block text-[11px] font-semibold text-zinc-700 mb-1"
+                        >
+                          Nota para el historial y cliente
+                        </label>
+                        <input
+                          id="next-tracking-note"
+                          type="text"
+                          value={customNote}
+                          onChange={(e) => setCustomNote(e.target.value)}
+                          maxLength={200}
+                          placeholder="Detalle del movimiento"
+                          className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        disabled={advancing}
+                        onClick={() => void handleAdvanceNextStage()}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-zinc-950 hover:bg-blue-700 disabled:opacity-55 rounded-lg transition-colors cursor-pointer"
+                      >
+                        <span>
+                          {advancing
+                            ? 'Guardando...'
+                            : `Confirmar: ${nextStageMeta.label}`}
+                        </span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {advanceError && (
+                  <div className="mb-4 p-3 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg">
+                    {advanceError}
+                  </div>
+                )}
+
                 <ol className="space-y-4 border-l border-zinc-200 ml-2.5 pl-6">
                   {[...activeOrder.trackingEvents].reverse().map((ev, idx) => (
                     <li key={`${ev.timestampIso}-${idx}`} className="relative">

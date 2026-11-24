@@ -38,10 +38,15 @@ import {
 } from './server/cloudflareTunnel.ts';
 import { buildPcAppBundle, type DownloadPlatform } from './server/zipBuilder.ts';
 import { getDefaultCategoryImage } from './src/lib/categoryAssets.ts';
-import { MAX_PRODUCT_IMAGES, isValidImageSource } from './src/lib/imageTools.ts';
+import {
+  MAX_PRODUCT_IMAGES,
+  getProductGallery,
+  isValidImageSource,
+} from './src/lib/imageTools.ts';
 import {
   MONTHLY_SUBSCRIPTION_COST,
   clampString,
+  formatCurrency,
   generateOrderNumber,
   generateTrackingCode,
   generateTransactionId,
@@ -73,22 +78,43 @@ const NETWORK_MODE: 'local' | 'lan' =
 const BIND_HOST = NETWORK_MODE === 'local' ? '127.0.0.1' : '0.0.0.0';
 const BOOTSTRAP_ADMIN_EMAIL = 'informaticaurquiza@gmail.com';
 
-let cachedFirebaseApiKey: string | null = null;
-function getFirebaseWebApiKey(): string | null {
-  if (cachedFirebaseApiKey !== null) return cachedFirebaseApiKey || null;
+interface FirebasePublicConfig {
+  apiKey: string;
+  projectId: string;
+  firestoreDatabaseId: string;
+}
+
+let cachedFirebaseConfig: FirebasePublicConfig | null | undefined;
+function getFirebasePublicConfig(): FirebasePublicConfig | null {
+  if (cachedFirebaseConfig !== undefined) return cachedFirebaseConfig;
   try {
     const cfgPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
     if (!fs.existsSync(cfgPath)) {
-      cachedFirebaseApiKey = '';
+      cachedFirebaseConfig = null;
       return null;
     }
-    const parsed = JSON.parse(fs.readFileSync(cfgPath, 'utf8')) as { apiKey?: string };
-    cachedFirebaseApiKey = typeof parsed.apiKey === 'string' ? parsed.apiKey.trim() : '';
-    return cachedFirebaseApiKey || null;
+    const parsed = JSON.parse(fs.readFileSync(cfgPath, 'utf8')) as {
+      apiKey?: string;
+      projectId?: string;
+      firestoreDatabaseId?: string;
+    };
+    const apiKey = typeof parsed.apiKey === 'string' ? parsed.apiKey.trim() : '';
+    const projectId = typeof parsed.projectId === 'string' ? parsed.projectId.trim() : '';
+    const firestoreDatabaseId =
+      typeof parsed.firestoreDatabaseId === 'string' && parsed.firestoreDatabaseId.trim()
+        ? parsed.firestoreDatabaseId.trim()
+        : '(default)';
+    cachedFirebaseConfig = { apiKey, projectId, firestoreDatabaseId };
+    return cachedFirebaseConfig;
   } catch {
-    cachedFirebaseApiKey = '';
+    cachedFirebaseConfig = null;
     return null;
   }
+}
+
+function getFirebaseWebApiKey(): string | null {
+  const cfg = getFirebasePublicConfig();
+  return cfg?.apiKey || null;
 }
 
 async function verifyFirebaseAdminToken(idToken: string): Promise<boolean> {
@@ -2881,6 +2907,438 @@ app.post('/api/receipts/parse', async (req, res) => {
         'No pudimos leer automáticamente el comprobante en este momento. El archivo sigue adjunto y podés completar los campos manualmente.',
     });
   }
+});
+
+// --- Social Share Card (OpenGraph + Product Photo) for Facebook / WhatsApp ---
+
+interface PublicShareProduct {
+  id: string;
+  sku: string;
+  name: string;
+  description: string;
+  category: CategoryId;
+  categoryLabel: string;
+  price: number;
+  stock: number;
+  freeShipping: boolean;
+  imageUrl: string;
+  images: string[];
+  updatedAt: string;
+}
+
+const VALID_SHARE_PRODUCT_ID_RE = /^[a-zA-Z0-9_-]{1,120}$/;
+const SAFE_HOST_HEADER_RE = /^[a-zA-Z0-9.-]+(:\d{1,5})?$/;
+const SOCIAL_CRAWLER_UA_RE =
+  /facebookexternalhit|facebot|whatsapp|twitterbot|linkedinbot|slackbot|telegrambot|discordbot|pinterest|embedly/i;
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeJsonLd(obj: unknown): string {
+  return JSON.stringify(obj)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026');
+}
+
+function isPrivateHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  return (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host === '0.0.0.0' ||
+    host.endsWith('.local') ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^169\.254\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(host) ||
+    /^fc00:|^fd[0-9a-f]{2}:|^fe80:/i.test(host)
+  );
+}
+
+function isSafePublicHttpUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    if (!parsed.hostname || isPrivateHostname(parsed.hostname)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveSharePublicOrigin(req: Request): string {
+  const rawForwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
+  const rawHost = rawForwardedHost || String(req.headers.host || '').trim();
+  const safeHost = SAFE_HOST_HEADER_RE.test(rawHost) ? rawHost : '';
+  const hostnameOnly = safeHost.split(':')[0] || '';
+
+  if (hostnameOnly && isPrivateHostname(hostnameOnly)) {
+    const cfPublic = getCloudflarePublicUrl();
+    if (cfPublic && isSafePublicHttpUrl(cfPublic)) {
+      return cfPublic.replace(/\/+$/, '');
+    }
+  }
+
+  if (safeHost) {
+    const forwardedProto = String(req.headers['x-forwarded-proto'] || '')
+      .split(',')[0]
+      .trim()
+      .toLowerCase();
+    const proto =
+      forwardedProto === 'https' || forwardedProto === 'http'
+        ? forwardedProto
+        : hostnameOnly && !isPrivateHostname(hostnameOnly)
+          ? 'https'
+          : req.protocol === 'https'
+            ? 'https'
+            : 'http';
+    return `${proto}://${safeHost}`;
+  }
+
+  const envAppUrl = (process.env.APP_URL || '').trim();
+  if (envAppUrl && isSafePublicHttpUrl(envAppUrl)) {
+    return envAppUrl.replace(/\/+$/, '');
+  }
+
+  return `http://localhost:${PORT}`;
+}
+
+function resolveSafeStaticImagePath(relPath: string): { filePath: string; mimeType: string } | null {
+  const cleanPath = relPath.split('?')[0].split('#')[0].trim();
+  if (!cleanPath.startsWith('/') || cleanPath.includes('\0')) return null;
+
+  const trimmedRel = cleanPath.replace(/^\/+/, '');
+  const rootDir = process.cwd();
+  const allowedBases = [
+    path.resolve(rootDir, 'src', 'assets', 'images'),
+    path.resolve(rootDir, 'public'),
+    path.resolve(rootDir, 'dist'),
+  ];
+
+  const candidatePaths = [
+    path.resolve(rootDir, trimmedRel),
+    path.resolve(rootDir, 'public', trimmedRel),
+    path.resolve(rootDir, 'dist', trimmedRel),
+  ];
+
+  for (const candidate of candidatePaths) {
+    const isAllowed = allowedBases.some((base) => candidate.startsWith(base + path.sep));
+    if (!isAllowed) continue;
+    if (!fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) continue;
+
+    const ext = path.extname(candidate).toLowerCase();
+    const mimeType =
+      ext === '.jpg' || ext === '.jpeg'
+        ? 'image/jpeg'
+        : ext === '.png'
+          ? 'image/png'
+          : ext === '.webp'
+            ? 'image/webp'
+            : '';
+    if (!mimeType) continue;
+    return { filePath: candidate, mimeType };
+  }
+
+  return null;
+}
+
+function decodeBase64ProductImage(
+  dataUrl: string,
+): { mimeType: 'image/jpeg' | 'image/png' | 'image/webp'; buffer: Buffer } | null {
+  const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=\s]+)$/.exec(dataUrl.trim());
+  if (!match) return null;
+  const mimeType = match[1] as 'image/jpeg' | 'image/png' | 'image/webp';
+  try {
+    const buffer = Buffer.from(match[2], 'base64');
+    if (buffer.length === 0 || buffer.length > 5 * 1024 * 1024) return null;
+    return { mimeType, buffer };
+  } catch {
+    return null;
+  }
+}
+
+function toPublicShareProduct(p: Product): PublicShareProduct {
+  const gallery = getProductGallery(p);
+  const category = (p.category in CATEGORY_MAP ? p.category : 'tecnologia') as CategoryId;
+  return {
+    id: p.id,
+    sku: p.sku || '',
+    name: p.name || 'Producto Infourqui Mercado',
+    description: p.description || '',
+    category,
+    categoryLabel: p.categoryLabel || CATEGORY_MAP[category]?.label || 'Catálogo',
+    price: Number.isFinite(p.price) ? p.price : 0,
+    stock: Number.isFinite(p.stock) ? p.stock : 0,
+    freeShipping: Boolean(p.freeShipping),
+    imageUrl: gallery[0] || getDefaultCategoryImage(category),
+    images: gallery.length > 0 ? gallery : [getDefaultCategoryImage(category)],
+    updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : '',
+  };
+}
+
+function readFirestoreString(fields: Record<string, unknown>, key: string): string {
+  const f = fields[key] as { stringValue?: string } | undefined;
+  return typeof f?.stringValue === 'string' ? f.stringValue : '';
+}
+
+function readFirestoreNumber(fields: Record<string, unknown>, key: string): number {
+  const f = fields[key] as { integerValue?: string; doubleValue?: number } | undefined;
+  if (typeof f?.doubleValue === 'number' && Number.isFinite(f.doubleValue)) return f.doubleValue;
+  if (typeof f?.integerValue === 'string') {
+    const parsed = Number(f.integerValue);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function readFirestoreBool(fields: Record<string, unknown>, key: string): boolean {
+  const f = fields[key] as { booleanValue?: boolean } | undefined;
+  return f?.booleanValue === true;
+}
+
+function readFirestoreStringArray(fields: Record<string, unknown>, key: string): string[] {
+  const f = fields[key] as { arrayValue?: { values?: Array<{ stringValue?: string }> } } | undefined;
+  const vals = f?.arrayValue?.values;
+  if (!Array.isArray(vals)) return [];
+  return vals
+    .map((v) => (typeof v?.stringValue === 'string' ? v.stringValue.trim() : ''))
+    .filter(Boolean)
+    .slice(0, MAX_PRODUCT_IMAGES);
+}
+
+async function findPublicShareProductById(productId: string): Promise<PublicShareProduct | null> {
+  if (!VALID_SHARE_PRODUCT_ID_RE.test(productId)) return null;
+
+  try {
+    const db = loadLocalDb();
+    const localMatch = db.products.find((p) => p.id === productId);
+    if (localMatch && localMatch.active !== false) {
+      return toPublicShareProduct(localMatch);
+    }
+  } catch {
+    // Continue to Firestore fallback
+  }
+
+  const fb = getFirebasePublicConfig();
+  if (!fb?.projectId || !fb.firestoreDatabaseId) return null;
+
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
+      fb.projectId,
+    )}/databases/${encodeURIComponent(
+      fb.firestoreDatabaseId,
+    )}/documents/products/${encodeURIComponent(productId)}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3500);
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) return null;
+      const doc = (await response.json()) as { fields?: Record<string, unknown> };
+      const fields = doc.fields;
+      if (!fields || typeof fields !== 'object') return null;
+      if (fields.active && !readFirestoreBool(fields, 'active')) return null;
+
+      const rawCategory = readFirestoreString(fields, 'category');
+      const category = (rawCategory in CATEGORY_MAP ? rawCategory : 'tecnologia') as CategoryId;
+      const imageUrl = readFirestoreString(fields, 'imageUrl');
+      const images = readFirestoreStringArray(fields, 'images');
+      const gallery = getProductGallery({ imageUrl, images });
+
+      return {
+        id: productId,
+        sku: readFirestoreString(fields, 'sku'),
+        name: readFirestoreString(fields, 'name') || 'Producto Infourqui Mercado',
+        description: readFirestoreString(fields, 'description'),
+        category,
+        categoryLabel:
+          readFirestoreString(fields, 'categoryLabel') || CATEGORY_MAP[category]?.label || 'Catálogo',
+        price: readFirestoreNumber(fields, 'price'),
+        stock: readFirestoreNumber(fields, 'stock'),
+        freeShipping: readFirestoreBool(fields, 'freeShipping'),
+        imageUrl: gallery[0] || getDefaultCategoryImage(category),
+        images: gallery.length > 0 ? gallery : [getDefaultCategoryImage(category)],
+        updatedAt: readFirestoreString(fields, 'updatedAt'),
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch {
+    return null;
+  }
+}
+
+app.get('/share/producto/:id/imagen', async (req: Request, res: Response) => {
+  const productId = String(req.params.id || '').trim();
+  if (!VALID_SHARE_PRODUCT_ID_RE.test(productId)) {
+    res.status(400).send('Identificador de producto inválido.');
+    return;
+  }
+
+  const product = await findPublicShareProductById(productId);
+  const rawIdx = Number.parseInt(String(req.query.foto ?? req.query.index ?? '0'), 10);
+  const photoIndex = Number.isFinite(rawIdx) ? Math.max(0, Math.min(MAX_PRODUCT_IMAGES - 1, rawIdx)) : 0;
+
+  const fallbackRel = getDefaultCategoryImage(product?.category || 'tecnologia');
+  const selectedSrc =
+    (product && (product.images[photoIndex] || product.imageUrl)) || fallbackRel;
+
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'public, max-age=300');
+
+  if (selectedSrc.startsWith('data:image/')) {
+    const decoded = decodeBase64ProductImage(selectedSrc);
+    if (decoded) {
+      res.setHeader('Content-Type', decoded.mimeType);
+      res.send(decoded.buffer);
+      return;
+    }
+  }
+
+  if (selectedSrc.startsWith('/')) {
+    const safeFile = resolveSafeStaticImagePath(selectedSrc);
+    if (safeFile) {
+      res.setHeader('Content-Type', safeFile.mimeType);
+      res.sendFile(safeFile.filePath);
+      return;
+    }
+  }
+
+  if (isSafePublicHttpUrl(selectedSrc)) {
+    res.redirect(302, selectedSrc);
+    return;
+  }
+
+  const fallbackFile = resolveSafeStaticImagePath(fallbackRel);
+  if (fallbackFile) {
+    res.setHeader('Content-Type', fallbackFile.mimeType);
+    res.sendFile(fallbackFile.filePath);
+    return;
+  }
+
+  res.status(404).send('Imagen no disponible.');
+});
+
+app.get('/share/producto/:id', async (req: Request, res: Response) => {
+  const productId = String(req.params.id || '').trim();
+  if (!VALID_SHARE_PRODUCT_ID_RE.test(productId)) {
+    res.redirect(302, '/');
+    return;
+  }
+
+  const rawIdx = Number.parseInt(String(req.query.foto ?? '0'), 10);
+  const photoIndex = Number.isFinite(rawIdx) ? Math.max(0, Math.min(MAX_PRODUCT_IMAGES - 1, rawIdx)) : 0;
+
+  const publicOrigin = resolveSharePublicOrigin(req);
+  const product = await findPublicShareProductById(productId);
+  const destinationUrl = `${publicOrigin}/?producto=${encodeURIComponent(productId)}`;
+
+  if (!product) {
+    res.redirect(302, destinationUrl);
+    return;
+  }
+
+  const clampedIndex = Math.min(photoIndex, Math.max(0, product.images.length - 1));
+  const selectedPhoto = product.images[clampedIndex] || product.imageUrl;
+  const photoFingerprint = crypto
+    .createHash('sha1')
+    .update(`${product.updatedAt}|${clampedIndex}|${selectedPhoto.slice(0, 128)}`)
+    .digest('hex')
+    .slice(0, 10);
+
+  const sharePageUrl = `${publicOrigin}/share/producto/${encodeURIComponent(
+    product.id,
+  )}?foto=${clampedIndex}`;
+  const ogImageUrl = `${publicOrigin}/share/producto/${encodeURIComponent(
+    product.id,
+  )}/imagen?foto=${clampedIndex}&v=${photoFingerprint}`;
+
+  const titleText = `${product.name} — ${formatCurrency(product.price)} | Infourqui Mercado`;
+  const shortDesc = product.description.trim();
+  const descriptionParts = [
+    shortDesc.length > 140 ? `${shortDesc.slice(0, 137).trimEnd()}...` : shortDesc,
+    product.freeShipping ? 'Envío gratis' : '',
+    product.stock > 0 ? 'Stock disponible' : 'Consultar stock',
+    `SKU ${product.sku}`,
+  ].filter(Boolean);
+  const descriptionText =
+    descriptionParts.join(' · ') || 'Comprá online en Infourqui Mercado.';
+
+  const userAgent = String(req.headers['user-agent'] || '');
+  const isSocialCrawler = SOCIAL_CRAWLER_UA_RE.test(userAgent);
+
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'Product',
+    name: product.name,
+    sku: product.sku,
+    category: product.categoryLabel,
+    description: descriptionText,
+    image: [ogImageUrl],
+    offers: {
+      '@type': 'Offer',
+      priceCurrency: 'ARS',
+      price: String(product.price),
+      availability:
+        product.stock > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+      url: destinationUrl,
+    },
+  };
+
+  const redirectMeta = isSocialCrawler
+    ? ''
+    : `<meta http-equiv="refresh" content="0;url=${escapeHtml(destinationUrl)}" />`;
+
+  const html = `<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${escapeHtml(titleText)}</title>
+    <meta name="description" content="${escapeHtml(descriptionText)}" />
+    <link rel="canonical" href="${escapeHtml(sharePageUrl)}" />
+    <meta property="og:type" content="product" />
+    <meta property="og:site_name" content="Infourqui Mercado" />
+    <meta property="og:locale" content="es_AR" />
+    <meta property="og:title" content="${escapeHtml(titleText)}" />
+    <meta property="og:description" content="${escapeHtml(descriptionText)}" />
+    <meta property="og:url" content="${escapeHtml(sharePageUrl)}" />
+    <meta property="og:image" content="${escapeHtml(ogImageUrl)}" />
+    ${ogImageUrl.startsWith('https://') ? `<meta property="og:image:secure_url" content="${escapeHtml(ogImageUrl)}" />` : ''}
+    <meta property="og:image:alt" content="${escapeHtml(product.name)}" />
+    <meta property="product:price:amount" content="${escapeHtml(String(product.price))}" />
+    <meta property="product:price:currency" content="ARS" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="${escapeHtml(titleText)}" />
+    <meta name="twitter:description" content="${escapeHtml(descriptionText)}" />
+    <meta name="twitter:image" content="${escapeHtml(ogImageUrl)}" />
+    ${redirectMeta}
+    <script type="application/ld+json">${escapeJsonLd(jsonLd)}</script>
+  </head>
+  <body style="font-family:system-ui,-apple-system,sans-serif;background:#fafafa;color:#09090b;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px;">
+    <main style="max-width:420px;width:100%;background:#fff;border:1px solid #e4e4e7;border-radius:16px;overflow:hidden;text-align:center;">
+      <img src="${escapeHtml(ogImageUrl)}" alt="${escapeHtml(product.name)}" style="width:100%;max-height:280px;object-fit:cover;display:block;background:#f4f4f5;" />
+      <div style="padding:20px;">
+        <p style="margin:0 0 6px;font-size:12px;color:#71717a;">Infourqui Mercado</p>
+        <h1 style="margin:0 0 8px;font-size:18px;line-height:1.3;">${escapeHtml(product.name)}</h1>
+        <p style="margin:0 0 16px;font-size:20px;font-weight:700;color:#1d4ed8;">${escapeHtml(formatCurrency(product.price))}</p>
+        <a href="${escapeHtml(destinationUrl)}" style="display:inline-block;padding:10px 18px;border-radius:8px;background:#1d4ed8;color:#fff;text-decoration:none;font-size:14px;font-weight:600;">Ver artículo en la tienda</a>
+      </div>
+    </main>
+  </body>
+</html>`;
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  res.status(200).send(html);
 });
 
 // --- Frontend Serving (Vite Middleware in Dev / Dist in Prod) ---

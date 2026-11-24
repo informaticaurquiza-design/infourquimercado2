@@ -78,6 +78,7 @@ import {
 } from '../types/ecommerce';
 import { AdminAccountsPanel } from './AdminAccountsPanel';
 import { DatabaseBackupPanel } from './DatabaseBackupPanel';
+import { FacebookShareModal } from './FacebookShareModal';
 import { LocalDatabasePanel } from './LocalDatabasePanel';
 import { ProductImage } from './ProductImage';
 import { ProductImagesEditor } from './ProductImagesEditor';
@@ -167,6 +168,7 @@ export function AdminDashboardView({
   });
   const [invSearch, setInvSearch] = useState('');
   const [onlyLowStock, setOnlyLowStock] = useState(false);
+  const [facebookShareProduct, setFacebookShareProduct] = useState<Product | null>(null);
 
   const sellerSubInfo = useMemo(() => {
     const effectiveProfile: UserProfile | null = profile
@@ -445,8 +447,10 @@ export function AdminDashboardView({
     });
   }, [managedProducts, invSearch, onlyLowStock]);
 
-  const shareBaseUrl = useMemo(() => {
-    if (typeof window === 'undefined') return '';
+  const { shareBaseUrl, isPrivateOriginWithoutPublicUrl } = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return { shareBaseUrl: '', isPrivateOriginWithoutPublicUrl: false };
+    }
     const host = window.location.hostname.toLowerCase();
     const isPrivateHost =
       host === 'localhost' ||
@@ -455,14 +459,20 @@ export function AdminDashboardView({
       /^10\./.test(host) ||
       /^172\.(1[6-9]|2\d|3[0-1])\./.test(host);
     if (isPrivateHost && localServerInfo?.cloudflarePublicUrl) {
-      return localServerInfo.cloudflarePublicUrl.replace(/\/+$/, '');
+      return {
+        shareBaseUrl: localServerInfo.cloudflarePublicUrl.replace(/\/+$/, ''),
+        isPrivateOriginWithoutPublicUrl: false,
+      };
     }
-    return `${window.location.origin}${window.location.pathname}`.replace(/\/+$/, '');
+    return {
+      shareBaseUrl: window.location.origin.replace(/\/+$/, ''),
+      isPrivateOriginWithoutPublicUrl: isPrivateHost,
+    };
   }, [localServerInfo?.cloudflarePublicUrl]);
 
   function buildProductShareLinks(product: Product) {
     const productUrl = shareBaseUrl
-      ? `${shareBaseUrl}/?producto=${encodeURIComponent(product.id)}`
+      ? `${shareBaseUrl}/share/producto/${encodeURIComponent(product.id)}`
       : '';
     const snippet = product.description.trim();
     const shortDesc =
@@ -1495,16 +1505,15 @@ export function AdminDashboardView({
                             >
                               <WhatsAppIcon className="w-3.5 h-3.5" />
                             </a>
-                            <a
-                              href={shareLinks.facebookUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              title={`Compartir ${product.name} en Facebook`}
-                              aria-label={`Compartir ${product.name} en Facebook`}
-                              className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-blue-600 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+                            <button
+                              type="button"
+                              onClick={() => setFacebookShareProduct(product)}
+                              title={`Compartir ${product.name} con foto en Facebook`}
+                              aria-label={`Compartir ${product.name} con foto en Facebook`}
+                              className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-blue-600 hover:text-blue-700 hover:bg-blue-50 transition-colors cursor-pointer"
                             >
                               <FacebookIcon className="w-3.5 h-3.5" />
-                            </a>
+                            </button>
                             <button
                               type="button"
                               disabled={!canPublishOrEdit}
@@ -2542,6 +2551,14 @@ export function AdminDashboardView({
           </div>
         </div>
       )}
+
+      <FacebookShareModal
+        product={facebookShareProduct}
+        shareBaseUrl={shareBaseUrl}
+        isPrivateOriginWithoutPublicUrl={isPrivateOriginWithoutPublicUrl}
+        onClose={() => setFacebookShareProduct(null)}
+        onNotifyToast={onNotifyToast}
+      />
     </div>
   );
 }
