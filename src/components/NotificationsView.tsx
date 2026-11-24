@@ -174,7 +174,7 @@ export function NotificationsView({
             onClick={onRequireSignIn}
             className="px-5 py-2.5 text-sm font-medium text-white bg-zinc-950 hover:bg-blue-700 rounded-lg transition-colors cursor-pointer"
           >
-            Ingresar con Google
+            Ingresar con mi cuenta
           </button>
         </div>
       ) : (

@@ -44,12 +44,20 @@ interface CloudSignupProfileInput {
   bankAccountHolder?: string;
 }
 
+interface LocalAuthActionResult {
+  emailPasswordDisabled?: boolean;
+  verificationSent?: boolean;
+  emailNotVerified?: boolean;
+  email?: string;
+}
+
 interface AccountModalProps {
   open: boolean;
   onClose: () => void;
   dbMode: DatabaseMode;
   onChangeDbMode: (mode: DatabaseMode) => void;
   localServerInfo: LocalServerInfo | null;
+  onRefreshLocalServerInfo?: () => Promise<void>;
   user: AppUser | null;
   profile: UserProfile | null;
   isAdmin: boolean;
@@ -62,7 +70,11 @@ interface AccountModalProps {
     businessName?: string;
     password: string;
   }) => Promise<void>;
-  onLoginLocal: (input: { email: string; password: string }) => Promise<void>;
+  onLoginLocal: (input: {
+    email: string;
+    password: string;
+    resendVerification?: boolean;
+  }) => Promise<LocalAuthActionResult | void>;
   onRegisterLocal: (input: {
     email: string;
     displayName: string;
@@ -72,7 +84,7 @@ interface AccountModalProps {
     bankAlias?: string;
     bankAccountHolder?: string;
     password: string;
-  }) => Promise<void>;
+  }) => Promise<LocalAuthActionResult | void>;
   onProfileSaved?: (updates: Partial<UserProfile>) => void;
   onSignOut: () => Promise<void>;
   pushPermission: PushPermissionState;
@@ -109,6 +121,7 @@ export function AccountModal({
   dbMode,
   onChangeDbMode,
   localServerInfo,
+  onRefreshLocalServerInfo,
   user,
   profile,
   isAdmin,
@@ -159,6 +172,9 @@ export function AccountModal({
   const [authNotice, setAuthNotice] = useState('');
   const [unauthorizedDomain, setUnauthorizedDomain] = useState('');
   const [copiedDomain, setCopiedDomain] = useState(false);
+  const [emailPasswordDisabled, setEmailPasswordDisabled] = useState(false);
+  const [pendingVerificationEmail, setPendingVerificationEmail] = useState('');
+  const [canResendVerification, setCanResendVerification] = useState(false);
 
   // Signed-in password change state
   const [showPasswordSection, setShowPasswordSection] = useState(false);
@@ -187,6 +203,9 @@ export function AccountModal({
       setAuthNotice('');
       setUnauthorizedDomain('');
       setCopiedDomain(false);
+      setEmailPasswordDisabled(false);
+      setPendingVerificationEmail('');
+      setCanResendVerification(false);
       setAuthPassword('');
       setSignupName('');
       setSignupBusiness('');
@@ -202,8 +221,11 @@ export function AccountModal({
       setPasswordError('');
       setPasswordSuccess('');
 
-      const initialMethod: 'local' | 'google' =
-        localAvailable && dbMode === 'local' ? 'local' : 'google';
+      if (!localAvailable && onRefreshLocalServerInfo) {
+        void onRefreshLocalServerInfo();
+      }
+
+      const initialMethod: 'local' | 'google' = dbMode === 'local' ? 'local' : 'google';
       setAuthMethod(initialMethod);
 
       if (dbMode === 'local' && needsAdminSetup) {
@@ -219,13 +241,10 @@ export function AccountModal({
 
   useEffect(() => {
     if (!open) return;
-    if (!localAvailable && authMethod === 'local') {
-      setAuthMethod('google');
-    }
     if (!needsAdminSetup && authTab === 'setup') {
       setAuthTab('login');
     }
-  }, [open, localAvailable, authMethod, needsAdminSetup, authTab]);
+  }, [open, needsAdminSetup, authTab]);
 
   useEffect(() => {
     if (profile) {
@@ -253,6 +272,9 @@ export function AccountModal({
     setAuthError('');
     setAuthNotice('');
     setUnauthorizedDomain('');
+    setEmailPasswordDisabled(false);
+    setPendingVerificationEmail('');
+    setCanResendVerification(false);
     setAuthLoading(true);
     try {
       const result = await onSignInGoogle(
@@ -289,10 +311,14 @@ export function AccountModal({
     }
   }
 
-  async function handleLocalAuthSubmit(e: React.FormEvent) {
+  async function handleLocalAuthSubmit(e: React.FormEvent, resendVerification = false) {
     e.preventDefault();
     setAuthError('');
     setAuthNotice('');
+    setUnauthorizedDomain('');
+    setEmailPasswordDisabled(false);
+    setPendingVerificationEmail('');
+    setCanResendVerification(false);
     setAuthLoading(true);
     try {
       if (authTab === 'setup') {
@@ -302,8 +328,13 @@ export function AccountModal({
           businessName: signupBusiness,
           password: authPassword,
         });
-      } else if (authTab === 'register') {
-        await onRegisterLocal({
+        setAuthPassword('');
+        onClose();
+        return;
+      }
+
+      if (authTab === 'register') {
+        const result = await onRegisterLocal({
           email: authEmail,
           displayName: signupName,
           businessName: signupBusiness,
@@ -313,11 +344,38 @@ export function AccountModal({
           bankAccountHolder: signupBankHolder,
           password: authPassword,
         });
-      } else {
-        await onLoginLocal({
-          email: authEmail,
-          password: authPassword,
-        });
+        if (result?.emailPasswordDisabled) {
+          setEmailPasswordDisabled(true);
+          return;
+        }
+        if (result?.verificationSent) {
+          setPendingVerificationEmail(result.email || authEmail);
+          setCanResendVerification(false);
+          setAuthTab('login');
+          setAuthMethod('local');
+          return;
+        }
+        setAuthPassword('');
+        onClose();
+        return;
+      }
+
+      const result = await onLoginLocal({
+        email: authEmail,
+        password: authPassword,
+        resendVerification,
+      });
+      if (result?.emailPasswordDisabled) {
+        setEmailPasswordDisabled(true);
+        return;
+      }
+      if (result?.emailNotVerified) {
+        setPendingVerificationEmail(result.email || authEmail);
+        setCanResendVerification(!result.verificationSent);
+        if (result.verificationSent) {
+          onNotifyToast('Reenviamos el correo de verificación.');
+        }
+        return;
       }
       setAuthPassword('');
       onClose();
@@ -354,7 +412,6 @@ export function AccountModal({
   }
 
   function renderMethodSwitcher() {
-    if (!localAvailable) return null;
     return (
       <div className="space-y-1.5">
         <p className="text-[11px] font-medium text-zinc-500">Elegí el método de acceso</p>
@@ -365,6 +422,8 @@ export function AccountModal({
               setAuthMethod('local');
               setAuthError('');
               setAuthNotice('');
+              setUnauthorizedDomain('');
+              setEmailPasswordDisabled(false);
             }}
             className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
               authMethod === 'local'
@@ -372,7 +431,7 @@ export function AccountModal({
                 : 'border-zinc-300 bg-white text-zinc-700 hover:border-zinc-950'
             }`}
           >
-            <KeyRound className="w-3.5 h-3.5" />
+            <KeyRound className="w-3.5 h-3.5 shrink-0" />
             <span>Cuenta local</span>
           </button>
           <button
@@ -381,6 +440,8 @@ export function AccountModal({
               setAuthMethod('google');
               setAuthError('');
               setAuthNotice('');
+              setEmailPasswordDisabled(false);
+              setPendingVerificationEmail('');
             }}
             className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
               authMethod === 'google'
@@ -389,7 +450,7 @@ export function AccountModal({
             }`}
           >
             <GoogleMark />
-            <span>Cuenta Google</span>
+            <span>Cuenta de Google</span>
           </button>
         </div>
       </div>
@@ -589,15 +650,87 @@ export function AccountModal({
                       )}
                     </button>
                   </div>
-                  <a
-                    href={`https://console.firebase.google.com/project/${encodeURIComponent(FIREBASE_PROJECT_ID)}/authentication/settings`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-white bg-zinc-950 hover:bg-blue-700 rounded-md transition-colors"
-                  >
-                    <ExternalLink className="w-3 h-3" />
-                    Abrir Dominios autorizados en Firebase
-                  </a>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <a
+                      href={`https://console.firebase.google.com/project/${encodeURIComponent(FIREBASE_PROJECT_ID)}/authentication/settings`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-white bg-zinc-950 hover:bg-blue-700 rounded-md transition-colors"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      Abrir Dominios autorizados en Firebase
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthMethod('local');
+                        setUnauthorizedDomain('');
+                        setAuthError('');
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-zinc-900 bg-white hover:bg-zinc-50 border border-amber-300 rounded-md transition-colors cursor-pointer"
+                    >
+                      <KeyRound className="w-3 h-3" />
+                      Usar Cuenta local
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {emailPasswordDisabled && (
+                <div className="p-3.5 rounded-lg bg-amber-50 border border-amber-200 space-y-2.5 text-xs text-amber-950">
+                  <p className="font-semibold">
+                    Habilitá el acceso por correo y contraseña en Firebase
+                  </p>
+                  <p className="text-amber-900 leading-relaxed">
+                    En este sitio web no hay un servidor PC Local activo. Para ingresar con correo y
+                    contraseña en la nube, activá el proveedor{' '}
+                    <span className="font-semibold">Correo electrónico/Contraseña</span> en Firebase
+                    Authentication (o ingresá con tu cuenta de Google):
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <a
+                      href={`https://console.firebase.google.com/project/${encodeURIComponent(FIREBASE_PROJECT_ID)}/authentication/providers`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-white bg-zinc-950 hover:bg-blue-700 rounded-md transition-colors"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      Activar en Firebase Console
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthMethod('google');
+                        setEmailPasswordDisabled(false);
+                        setAuthError('');
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-zinc-900 bg-white hover:bg-zinc-50 border border-amber-300 rounded-md transition-colors cursor-pointer"
+                    >
+                      <GoogleMark />
+                      Ingresar con Google
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {pendingVerificationEmail && (
+                <div className="p-3.5 rounded-lg bg-blue-50 border border-blue-200 space-y-2 text-xs text-blue-950">
+                  <p className="font-semibold">Verificá tu correo electrónico</p>
+                  <p className="leading-relaxed">
+                    {canResendVerification
+                      ? `Tu cuenta (${pendingVerificationEmail}) todavía no confirmó el enlace de verificación. Revisá tu bandeja de entrada o spam y luego volvé a ingresar.`
+                      : `Enviamos un enlace de verificación a ${pendingVerificationEmail}. Confirmá tu correo y luego iniciá sesión con tu contraseña.`}
+                  </p>
+                  {canResendVerification && (
+                    <button
+                      type="button"
+                      disabled={authLoading}
+                      onClick={(e) => void handleLocalAuthSubmit(e, true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-60 rounded-md transition-colors cursor-pointer"
+                    >
+                      Reenviar correo de verificación
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -691,8 +824,26 @@ export function AccountModal({
                 <div className="space-y-4">
                   {renderMethodSwitcher()}
 
-                  {authMethod === 'local' && localAvailable ? (
+                  {authMethod === 'local' ? (
                     <form onSubmit={handleLocalAuthSubmit} className="space-y-4">
+                      {localAvailable && needsAdminSetup && (
+                        <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-between gap-2 text-xs text-amber-950">
+                          <span>¿Primer ingreso como administrador local?</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAuthTab('setup');
+                              setAuthEmail((prev) => prev || 'informaticaurquiza@gmail.com');
+                              setSignupName((prev) => prev || 'Administrador Local');
+                              setAuthError('');
+                            }}
+                            className="font-semibold text-blue-700 hover:underline shrink-0 cursor-pointer"
+                          >
+                            Configurar Admin
+                          </button>
+                        </div>
+                      )}
+
                       <div>
                         <label className="block text-xs font-medium text-zinc-700 mb-1">
                           Correo electrónico
@@ -745,7 +896,7 @@ export function AccountModal({
                         className="w-full py-2.5 px-4 bg-white hover:bg-zinc-50 border border-zinc-300 disabled:opacity-60 text-zinc-900 text-sm font-medium rounded-lg transition-colors inline-flex items-center justify-center gap-2.5 cursor-pointer"
                       >
                         <GoogleMark />
-                        <span>Ingresar con cuenta Google</span>
+                        <span>Ingresar con cuenta de Google</span>
                       </button>
                     </form>
                   ) : (
@@ -769,27 +920,24 @@ export function AccountModal({
                         <span>{authLoading ? 'Verificando acceso...' : 'Ingresar con Google'}</span>
                       </button>
 
-                      {localAvailable && (
-                        <>
-                          <div className="relative flex items-center py-1">
-                            <div className="flex-grow border-t border-zinc-200" />
-                            <span className="px-3 text-[11px] text-zinc-400">o preferís</span>
-                            <div className="flex-grow border-t border-zinc-200" />
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setAuthMethod('local');
-                              setAuthError('');
-                              setAuthNotice('');
-                            }}
-                            className="w-full py-2.5 px-4 bg-white hover:bg-zinc-50 border border-zinc-300 text-zinc-900 text-xs font-semibold rounded-lg transition-colors inline-flex items-center justify-center gap-2 cursor-pointer"
-                          >
-                            <KeyRound className="w-3.5 h-3.5" />
-                            <span>Ingresar con cuenta local (correo y contraseña)</span>
-                          </button>
-                        </>
-                      )}
+                      <div className="relative flex items-center py-1">
+                        <div className="flex-grow border-t border-zinc-200" />
+                        <span className="px-3 text-[11px] text-zinc-400">o preferís</span>
+                        <div className="flex-grow border-t border-zinc-200" />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAuthMethod('local');
+                          setAuthError('');
+                          setAuthNotice('');
+                          setUnauthorizedDomain('');
+                        }}
+                        className="w-full py-2.5 px-4 bg-white hover:bg-zinc-50 border border-zinc-300 text-zinc-900 text-xs font-semibold rounded-lg transition-colors inline-flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <KeyRound className="w-3.5 h-3.5" />
+                        <span>Ingresar con cuenta local (correo y contraseña)</span>
+                      </button>
                     </div>
                   )}
 
@@ -822,7 +970,7 @@ export function AccountModal({
 
                   {renderMethodSwitcher()}
 
-                  {authMethod === 'local' && localAvailable ? (
+                  {authMethod === 'local' ? (
                     <form onSubmit={handleLocalAuthSubmit} className="space-y-3.5">
                       <div>
                         <label className="block text-xs font-medium text-zinc-700 mb-1">
@@ -991,27 +1139,24 @@ export function AccountModal({
                         <span>{authLoading ? 'Creando cuenta...' : 'Crear cuenta con Google'}</span>
                       </button>
 
-                      {localAvailable && (
-                        <>
-                          <div className="relative flex items-center py-0.5">
-                            <div className="flex-grow border-t border-zinc-200" />
-                            <span className="px-3 text-[11px] text-zinc-400">o preferís</span>
-                            <div className="flex-grow border-t border-zinc-200" />
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setAuthMethod('local');
-                              setAuthError('');
-                              setAuthNotice('');
-                            }}
-                            className="w-full py-2.5 px-4 bg-white hover:bg-zinc-50 border border-zinc-300 text-zinc-900 text-xs font-semibold rounded-lg transition-colors inline-flex items-center justify-center gap-2 cursor-pointer"
-                          >
-                            <KeyRound className="w-3.5 h-3.5" />
-                            <span>Crear cuenta local (correo y contraseña)</span>
-                          </button>
-                        </>
-                      )}
+                      <div className="relative flex items-center py-0.5">
+                        <div className="flex-grow border-t border-zinc-200" />
+                        <span className="px-3 text-[11px] text-zinc-400">o preferís</span>
+                        <div className="flex-grow border-t border-zinc-200" />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAuthMethod('local');
+                          setAuthError('');
+                          setAuthNotice('');
+                          setUnauthorizedDomain('');
+                        }}
+                        className="w-full py-2.5 px-4 bg-white hover:bg-zinc-50 border border-zinc-300 text-zinc-900 text-xs font-semibold rounded-lg transition-colors inline-flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <KeyRound className="w-3.5 h-3.5" />
+                        <span>Crear cuenta local (correo y contraseña)</span>
+                      </button>
                     </form>
                   )}
 

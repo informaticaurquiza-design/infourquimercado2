@@ -145,15 +145,15 @@ export function ShipmentTrackingView({
             Accedé al historial de tus envíos
           </h2>
           <p className="text-sm text-zinc-600 mb-6">
-            Iniciá sesión con tu cuenta de Google para visualizar todos tus pedidos activos, fechas
-            estimadas de entrega y comprobantes de pago.
+            Iniciá sesión con tu cuenta local o de Google para visualizar todos tus pedidos activos,
+            fechas estimadas de entrega y comprobantes de pago.
           </p>
           <button
             type="button"
             onClick={onRequireSignIn}
             className="px-5 py-2.5 text-sm font-medium text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors cursor-pointer"
           >
-            Ingresar con Google
+            Ingresar con mi cuenta
           </button>
         </div>
       ) : orders.length === 0 && !activeOrder ? (

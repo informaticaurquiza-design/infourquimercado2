@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
+import {
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  sendEmailVerification,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+  updateProfile,
+  type User,
+} from 'firebase/auth';
 import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
 import { Bell, X } from 'lucide-react';
 import { AccountModal } from './components/AccountModal';
@@ -94,12 +103,39 @@ function isLocalOrLanHostname(hostname: string): boolean {
   return false;
 }
 
+function getFirebaseAuthErrorCode(err: unknown): string {
+  if (!err || typeof err !== 'object') return '';
+  const maybeErr = err as { code?: unknown };
+  return typeof maybeErr.code === 'string' ? maybeErr.code : '';
+}
+
 function isFirebaseUnauthorizedDomainError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
   const maybeErr = err as { code?: unknown; message?: unknown };
   const code = typeof maybeErr.code === 'string' ? maybeErr.code : '';
   const msg = typeof maybeErr.message === 'string' ? maybeErr.message : '';
   return code === 'auth/unauthorized-domain' || msg.includes('auth/unauthorized-domain');
+}
+
+function mapFirebaseEmailAuthError(code: string): string {
+  switch (code) {
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+      return 'Correo electrónico o contraseña incorrectos.';
+    case 'auth/invalid-email':
+      return 'Ingresá un correo electrónico válido.';
+    case 'auth/email-already-in-use':
+      return 'Ya existe una cuenta registrada con ese correo electrónico.';
+    case 'auth/weak-password':
+      return 'La contraseña es demasiado débil. Usá al menos 8 caracteres.';
+    case 'auth/too-many-requests':
+      return 'Demasiados intentos fallidos. Esperá unos minutos e intentá nuevamente.';
+    case 'auth/network-request-failed':
+      return 'Error de red al conectar con el servicio de autenticación. Revisá tu conexión.';
+    default:
+      return 'No pudimos completar el acceso con correo y contraseña. Verificá los datos e intentá nuevamente.';
+  }
 }
 
 function readInitialDbMode(): DatabaseMode {
@@ -406,8 +442,8 @@ function AppContent() {
     if (dbMode !== 'cloud') return;
 
     const unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
-      setCloudUser(nextUser);
-      if (!nextUser) {
+      if (!nextUser || !nextUser.emailVerified) {
+        setCloudUser(null);
         setCloudIsAdmin(false);
         setCloudProfile(null);
         setCloudOrders([]);
@@ -421,6 +457,8 @@ function AppContent() {
         setCloudAuthReady(true);
         return;
       }
+
+      setCloudUser(nextUser);
 
       try {
         const [adminFlag, userProfile] = await Promise.all([
@@ -878,22 +916,84 @@ function AppContent() {
     showToast('Cuenta administradora local creada y sesión iniciada.');
   }
 
-  async function handleLoginLocal(input: { email: string; password: string }) {
-    const res = await loginLocalAccount(input);
-    userChangedDbModeRef.current = true;
-    setActiveDatabaseMode('local');
-    setDbMode('local');
-    setTrackedOrderId(null);
-    try {
-      window.localStorage.setItem(DB_MODE_STORAGE_KEY, 'local');
-    } catch {
-      // ignore storage errors
+  async function handleLoginLocal(input: {
+    email: string;
+    password: string;
+    resendVerification?: boolean;
+  }): Promise<{
+    emailPasswordDisabled?: boolean;
+    verificationSent?: boolean;
+    emailNotVerified?: boolean;
+    email?: string;
+  }> {
+    const info = localServerInfo?.available ? localServerInfo : await fetchLocalServerInfo();
+    if (info?.available) {
+      setLocalServerInfo(info);
+      const res = await loginLocalAccount({
+        email: input.email,
+        password: input.password,
+      });
+      userChangedDbModeRef.current = true;
+      setActiveDatabaseMode('local');
+      setDbMode('local');
+      setTrackedOrderId(null);
+      try {
+        window.localStorage.setItem(DB_MODE_STORAGE_KEY, 'local');
+      } catch {
+        // ignore storage errors
+      }
+      setLocalUser(res.user);
+      setLocalProfile(res.profile);
+      setLocalIsAdmin(res.isAdmin);
+      await loadLocalData();
+      showToast('Sesión local iniciada correctamente.');
+      return {};
     }
-    setLocalUser(res.user);
-    setLocalProfile(res.profile);
-    setLocalIsAdmin(res.isAdmin);
-    await loadLocalData();
-    showToast('Sesión local iniciada correctamente.');
+
+    // Fallback when running without the local PC server (e.g. static web deploy):
+    // authenticate via Firebase Email/Password so users can still sign in with email + password.
+    try {
+      const cleanEmail = input.email.trim();
+      const credential = await signInWithEmailAndPassword(auth, cleanEmail, input.password);
+      if (!credential.user.emailVerified) {
+        if (input.resendVerification) {
+          await sendEmailVerification(credential.user);
+        }
+        await signOut(auth);
+        return {
+          emailNotVerified: true,
+          verificationSent: Boolean(input.resendVerification),
+          email: cleanEmail,
+        };
+      }
+
+      userChangedDbModeRef.current = true;
+      setActiveDatabaseMode('cloud');
+      setDbMode('cloud');
+      setTrackedOrderId(null);
+      try {
+        window.localStorage.setItem(DB_MODE_STORAGE_KEY, 'cloud');
+      } catch {
+        // ignore storage errors
+      }
+
+      setCloudUser(credential.user);
+      const [adminFlag, ensured] = await Promise.all([
+        checkIsAdmin(credential.user),
+        ensureUserProfile(credential.user),
+      ]);
+      setCloudIsAdmin(adminFlag);
+      setCloudProfile(ensured);
+      setCloudAuthReady(true);
+      showToast('Sesión iniciada correctamente.');
+      return {};
+    } catch (err) {
+      const code = getFirebaseAuthErrorCode(err);
+      if (code === 'auth/operation-not-allowed') {
+        return { emailPasswordDisabled: true };
+      }
+      throw new Error(mapFirebaseEmailAuthError(code));
+    }
   }
 
   async function handleRegisterLocal(input: {
@@ -905,22 +1005,50 @@ function AppContent() {
     bankAlias?: string;
     bankAccountHolder?: string;
     password: string;
-  }) {
-    const res = await registerLocalCustomer(input);
-    userChangedDbModeRef.current = true;
-    setActiveDatabaseMode('local');
-    setDbMode('local');
-    setTrackedOrderId(null);
-    try {
-      window.localStorage.setItem(DB_MODE_STORAGE_KEY, 'local');
-    } catch {
-      // ignore storage errors
+  }): Promise<{
+    emailPasswordDisabled?: boolean;
+    verificationSent?: boolean;
+    email?: string;
+  }> {
+    const info = localServerInfo?.available ? localServerInfo : await fetchLocalServerInfo();
+    if (info?.available) {
+      setLocalServerInfo(info);
+      const res = await registerLocalCustomer(input);
+      userChangedDbModeRef.current = true;
+      setActiveDatabaseMode('local');
+      setDbMode('local');
+      setTrackedOrderId(null);
+      try {
+        window.localStorage.setItem(DB_MODE_STORAGE_KEY, 'local');
+      } catch {
+        // ignore storage errors
+      }
+      setLocalUser(res.user);
+      setLocalProfile(res.profile);
+      setLocalIsAdmin(res.isAdmin);
+      await Promise.all([loadLocalData(), refreshLocalServerInfo()]);
+      showToast('Cuenta local registrada e iniciada.');
+      return {};
     }
-    setLocalUser(res.user);
-    setLocalProfile(res.profile);
-    setLocalIsAdmin(res.isAdmin);
-    await Promise.all([loadLocalData(), refreshLocalServerInfo()]);
-    showToast('Cuenta local registrada e iniciada.');
+
+    // Fallback when running without the local PC server: register via Firebase Email/Password.
+    try {
+      const cleanEmail = input.email.trim();
+      const credential = await createUserWithEmailAndPassword(auth, cleanEmail, input.password);
+      if (input.displayName.trim()) {
+        await updateProfile(credential.user, { displayName: input.displayName.trim() });
+      }
+      await sendEmailVerification(credential.user);
+      await signOut(auth);
+      showToast('Te enviamos un correo para confirmar tu cuenta.');
+      return { verificationSent: true, email: cleanEmail };
+    } catch (err) {
+      const code = getFirebaseAuthErrorCode(err);
+      if (code === 'auth/operation-not-allowed') {
+        return { emailPasswordDisabled: true };
+      }
+      throw new Error(mapFirebaseEmailAuthError(code));
+    }
   }
 
   async function handleSignOut() {
@@ -1196,6 +1324,7 @@ function AppContent() {
         dbMode={dbMode}
         onChangeDbMode={(mode) => void handleChangeDbMode(mode)}
         localServerInfo={localServerInfo}
+        onRefreshLocalServerInfo={refreshLocalServerInfo}
         user={activeUser}
         profile={activeProfile}
         isAdmin={activeIsAdmin}
