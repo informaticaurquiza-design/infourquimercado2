@@ -112,6 +112,32 @@ const DEFAULT_HUB_LOCATIONS: Record<ShipmentStatus, string> = {
   cancelled: 'Plataforma Infourqui Mercado',
 };
 
+function WhatsAppIcon({ className = 'w-3.5 h-3.5' }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+      className={className}
+    >
+      <path d="M20.52 3.48A11.86 11.86 0 0 0 12.06 0C5.49 0 .15 5.34.15 11.91c0 2.1.55 4.15 1.59 5.95L0 24l6.33-1.66a11.86 11.86 0 0 0 5.73 1.46h.01c6.57 0 11.91-5.34 11.91-11.91 0-3.18-1.24-6.17-3.46-8.41ZM12.07 21.8h-.01a9.87 9.87 0 0 1-5.03-1.38l-.36-.21-3.76.99 1-3.66-.24-.38a9.88 9.88 0 0 1-1.51-5.25c0-5.46 4.44-9.9 9.91-9.9 2.65 0 5.14 1.03 7.01 2.9a9.85 9.85 0 0 1 2.9 7.01c0 5.46-4.45 9.88-9.91 9.88Zm5.43-7.41c-.3-.15-1.76-.87-2.03-.97-.27-.1-.47-.15-.67.15-.2.3-.77.97-.94 1.17-.17.2-.35.22-.64.07-.3-.15-1.26-.46-2.4-1.48-.89-.79-1.49-1.77-1.66-2.07-.17-.3-.02-.46.13-.61.13-.13.3-.35.45-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.07-.15-.67-1.61-.92-2.21-.24-.58-.49-.5-.67-.51h-.57c-.2 0-.52.07-.79.37-.27.3-1.04 1.02-1.04 2.48s1.07 2.88 1.21 3.08c.15.2 2.1 3.21 5.09 4.5.71.31 1.27.49 1.7.63.72.23 1.37.2 1.88.12.57-.09 1.76-.72 2.01-1.41.25-.7.25-1.29.17-1.41-.07-.12-.27-.2-.57-.35Z" />
+    </svg>
+  );
+}
+
+function FacebookIcon({ className = 'w-3.5 h-3.5' }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+      className={className}
+    >
+      <path d="M24 12.07C24 5.41 18.63 0 12 0S0 5.41 0 12.07c0 6.02 4.39 11.01 10.13 11.93v-8.44H7.08v-3.49h3.05V9.41c0-3.02 1.79-4.69 4.53-4.69 1.31 0 2.69.24 2.69.24v2.97h-1.51c-1.49 0-1.96.93-1.96 1.89v2.26h3.33l-.53 3.49h-2.8V24C19.61 23.08 24 18.09 24 12.07Z" />
+    </svg>
+  );
+}
+
 export function AdminDashboardView({
   user,
   profile,
@@ -418,6 +444,100 @@ export function AdminDashboardView({
       return true;
     });
   }, [managedProducts, invSearch, onlyLowStock]);
+
+  const shareBaseUrl = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    const host = window.location.hostname.toLowerCase();
+    const isPrivateHost =
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      /^192\.168\./.test(host) ||
+      /^10\./.test(host) ||
+      /^172\.(1[6-9]|2\d|3[0-1])\./.test(host);
+    if (isPrivateHost && localServerInfo?.cloudflarePublicUrl) {
+      return localServerInfo.cloudflarePublicUrl.replace(/\/+$/, '');
+    }
+    return `${window.location.origin}${window.location.pathname}`.replace(/\/+$/, '');
+  }, [localServerInfo?.cloudflarePublicUrl]);
+
+  function buildProductShareLinks(product: Product) {
+    const productUrl = shareBaseUrl
+      ? `${shareBaseUrl}/?producto=${encodeURIComponent(product.id)}`
+      : '';
+    const snippet = product.description.trim();
+    const shortDesc =
+      snippet.length > 110 ? `${snippet.slice(0, 107).trimEnd()}...` : snippet;
+    const priceLine = `Precio: ${formatCurrency(product.price)}${
+      product.freeShipping ? ' · Envío gratis' : ''
+    }`;
+    const stockLine =
+      product.stock > 0
+        ? `Stock disponible (${product.stock} u.)`
+        : 'Consultar disponibilidad';
+
+    const whatsappLines = [
+      `*${product.name}*`,
+      priceLine,
+      `${product.categoryLabel} · SKU ${product.sku}`,
+      stockLine,
+      ...(shortDesc ? [shortDesc] : []),
+      ...(productUrl ? ['', `Ver en Infourqui Mercado: ${productUrl}`] : []),
+    ];
+    const facebookQuote = [
+      product.name,
+      priceLine,
+      shortDesc || `${product.categoryLabel} · SKU ${product.sku}`,
+      'Disponible en Infourqui Mercado',
+    ]
+      .filter(Boolean)
+      .join(' — ');
+
+    return {
+      whatsappUrl: `https://wa.me/?text=${encodeURIComponent(whatsappLines.join('\n'))}`,
+      facebookUrl: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(
+        productUrl || shareBaseUrl,
+      )}&quote=${encodeURIComponent(facebookQuote)}`,
+    };
+  }
+
+  const inventoryListShareLinks = useMemo(() => {
+    const maxListed = 15;
+    const sample = filteredInventory.slice(0, maxListed);
+    const header = invSearch.trim()
+      ? `*Catálogo Infourqui Mercado — "${invSearch.trim()}"*`
+      : onlyLowStock
+        ? '*Últimas unidades en Infourqui Mercado*'
+        : '*Catálogo disponible en Infourqui Mercado*';
+    const itemLines = sample.map(
+      (p) =>
+        `• ${p.name} — ${formatCurrency(p.price)}${p.freeShipping ? ' (Envío gratis)' : ''}`,
+    );
+    const remaining = filteredInventory.length - sample.length;
+    const whatsappLines = [
+      header,
+      '',
+      ...itemLines,
+      ...(remaining > 0 ? [`...y ${remaining} producto(s) más.`] : []),
+      ...(shareBaseUrl ? ['', `Ver tienda completa: ${shareBaseUrl}`] : []),
+    ];
+    const facebookQuote = `Mirá nuestro catálogo de ${filteredInventory.length} producto${
+      filteredInventory.length === 1 ? '' : 's'
+    } en Infourqui Mercado.${
+      sample.length > 0
+        ? ` Destacados: ${sample
+            .slice(0, 3)
+            .map((p) => `${p.name} (${formatCurrency(p.price)})`)
+            .join(', ')}.`
+        : ''
+    }`;
+
+    return {
+      whatsappUrl: `https://wa.me/?text=${encodeURIComponent(whatsappLines.join('\n'))}`,
+      facebookUrl: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(
+        shareBaseUrl,
+      )}&quote=${encodeURIComponent(facebookQuote)}`,
+    };
+  }, [filteredInventory, invSearch, onlyLowStock, shareBaseUrl]);
 
   function launchNewProductModal() {
     setEditingProductId(null);
@@ -1203,15 +1323,44 @@ export function AdminDashboardView({
               </button>
             </div>
 
-            <button
-              type="button"
-              disabled={!canPublishOrEdit}
-              onClick={openNewProductModal}
-              className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-medium text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-45 disabled:cursor-not-allowed rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              Nuevo producto
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {filteredInventory.length > 0 && (
+                <div className="inline-flex items-center gap-1.5">
+                  <a
+                    href={inventoryListShareLinks.whatsappUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Compartir listado actual por WhatsApp"
+                    aria-label="Compartir listado actual por WhatsApp"
+                    className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors whitespace-nowrap"
+                  >
+                    <WhatsAppIcon className="w-3.5 h-3.5" />
+                    Compartir listado
+                  </a>
+                  <a
+                    href={inventoryListShareLinks.facebookUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Compartir listado actual en Facebook"
+                    aria-label="Compartir listado actual en Facebook"
+                    className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors whitespace-nowrap"
+                  >
+                    <FacebookIcon className="w-3.5 h-3.5" />
+                    Facebook
+                  </a>
+                </div>
+              )}
+
+              <button
+                type="button"
+                disabled={!canPublishOrEdit}
+                onClick={openNewProductModal}
+                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-medium text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-45 disabled:cursor-not-allowed rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                Nuevo producto
+              </button>
+            </div>
           </div>
 
           <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
@@ -1233,6 +1382,7 @@ export function AdminDashboardView({
                     const isOut = product.stock === 0;
                     const isLow = !isOut && product.stock <= product.minStockThreshold;
                     const photoCount = getProductGallery(product).length;
+                    const shareLinks = buildProductShareLinks(product);
                     return (
                       <tr key={product.id} className="hover:bg-zinc-50/80">
                         <td className="py-2.5 px-4 max-w-[320px]">
@@ -1335,10 +1485,31 @@ export function AdminDashboardView({
                         </td>
                         <td className="py-2.5 px-4 text-right whitespace-nowrap">
                           <div className="inline-flex items-center gap-1">
+                            <a
+                              href={shareLinks.whatsappUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title={`Compartir ${product.name} por WhatsApp`}
+                              aria-label={`Compartir ${product.name} por WhatsApp`}
+                              className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 transition-colors"
+                            >
+                              <WhatsAppIcon className="w-3.5 h-3.5" />
+                            </a>
+                            <a
+                              href={shareLinks.facebookUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title={`Compartir ${product.name} en Facebook`}
+                              aria-label={`Compartir ${product.name} en Facebook`}
+                              className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-blue-600 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+                            >
+                              <FacebookIcon className="w-3.5 h-3.5" />
+                            </a>
                             <button
                               type="button"
                               disabled={!canPublishOrEdit}
                               onClick={() => openEditProductModal(product)}
+                              title={`Editar ${product.name}`}
                               aria-label={`Editar ${product.name}`}
                               className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-zinc-500 hover:text-blue-700 hover:bg-zinc-100 disabled:opacity-35 cursor-pointer"
                             >
@@ -1350,6 +1521,7 @@ export function AdminDashboardView({
                                 await deleteProductById(product.id);
                                 onNotifyToast(`Producto ${product.sku} eliminado del inventario.`);
                               }}
+                              title={`Eliminar ${product.name}`}
                               aria-label={`Eliminar ${product.name}`}
                               className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-zinc-400 hover:text-red-600 hover:bg-zinc-100 cursor-pointer"
                             >

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownRight,
   ArrowUpDown,
@@ -66,6 +66,21 @@ export function StorefrontView({
   const [detailImageIndex, setDetailImageIndex] = useState(0);
   const [cardQuantities, setCardQuantities] = useState<Record<string, string>>({});
   const [recentlyAdded, setRecentlyAdded] = useState<{ id: string; qty: number } | null>(null);
+  const handledSharedProductRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || products.length === 0) return;
+    const sharedParam = new URLSearchParams(window.location.search).get('producto')?.trim();
+    if (!sharedParam || handledSharedProductRef.current === sharedParam) return;
+    const match = products.find(
+      (p) => p.id === sharedParam || p.sku.toLowerCase() === sharedParam.toLowerCase(),
+    );
+    if (!match) return;
+    handledSharedProductRef.current = sharedParam;
+    setSelectedProduct(match);
+    setDetailQty(match.stock > 0 ? 1 : 0);
+    setDetailImageIndex(0);
+  }, [products]);
 
   function openProductDetail(product: Product) {
     setSelectedProduct(product);
