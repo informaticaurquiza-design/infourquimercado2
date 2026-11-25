@@ -9,6 +9,7 @@ import {
   Edit3,
   ExternalLink,
   FileCheck2,
+  FolderTree,
   Globe,
   HardDrive,
   Landmark,
@@ -70,6 +71,7 @@ import {
   SHIPMENT_PIPELINE,
   type AdminTab,
   type AppUser,
+  type CategoryDefinition,
   type CategoryId,
   type CustomerBenefit,
   type DatabaseMode,
@@ -83,6 +85,7 @@ import {
   type UserProfile,
 } from '../types/ecommerce';
 import { AdminAccountsPanel } from './AdminAccountsPanel';
+import { AdminCategoriesPanel } from './AdminCategoriesPanel';
 import { BenefitsManagerModal } from './BenefitsManagerModal';
 import { DatabaseBackupPanel } from './DatabaseBackupPanel';
 import { FacebookShareModal } from './FacebookShareModal';
@@ -101,6 +104,7 @@ interface AdminDashboardViewProps {
   localServerInfo: LocalServerInfo | null;
   onRefreshServerInfo: () => Promise<void>;
   onRefreshLocalData?: () => Promise<void>;
+  categories?: CategoryDefinition[];
   products: Product[];
   orders: Order[];
   accounts: UserProfile[];
@@ -156,6 +160,7 @@ export function AdminDashboardView({
   localServerInfo,
   onRefreshServerInfo,
   onRefreshLocalData,
+  categories = CATEGORIES,
   products,
   orders,
   accounts,
@@ -393,7 +398,23 @@ export function AdminDashboardView({
     ).length;
 
     // Revenue & units by rubro (combining catalog soldCount + live orders)
-    const byCategory = CATEGORIES.map((cat) => {
+    const knownCatIds = new Set(categories.map((c) => c.id));
+    const extraCatEntries: CategoryDefinition[] = [];
+    for (const p of products) {
+      if (p.category && !knownCatIds.has(p.category)) {
+        knownCatIds.add(p.category);
+        extraCatEntries.push({
+          id: p.category,
+          label: p.categoryLabel || p.category,
+          shortLabel: (p.categoryLabel || p.category).slice(0, 18),
+          description: '',
+          active: false,
+          sortOrder: 999,
+        });
+      }
+    }
+    const allAnalyticsCategories = [...categories, ...extraCatEntries];
+    const byCategory = allAnalyticsCategories.map((cat) => {
       const catProducts = products.filter((p) => p.category === cat.id);
       const estimatedCatalogRevenue = catProducts.reduce(
         (sum, p) => sum + p.soldCount * p.price,
@@ -448,7 +469,7 @@ export function AdminDashboardView({
       paymentCounts,
       topProducts,
     };
-  }, [products, orders]);
+  }, [products, orders, categories]);
 
   const managedProducts = useMemo(() => {
     if (isAdmin) return products;
@@ -584,10 +605,12 @@ export function AdminDashboardView({
   }, [filteredInventory, invSearch, onlyLowStock, shareBaseUrl]);
 
   function launchNewProductModal() {
+    const defaultCategoryId =
+      categories.find((c) => c.active !== false)?.id || categories[0]?.id || 'tecnologia';
     setEditingProductId(null);
     setFormSku(`ALB-NEW-${Math.floor(100 + Math.random() * 900)}`);
     setFormName('');
-    setFormCategory('tecnologia');
+    setFormCategory(defaultCategoryId);
     setFormDescription('');
     setFormPrice('');
     setFormComparePrice('');
@@ -733,11 +756,14 @@ export function AdminDashboardView({
               }
             : {};
 
+      const selectedCategoryMeta = categories.find((c) => c.id === formCategory);
+
       await createOrUpdateProduct({
         id: editingProductId || undefined,
         sku: formSku,
         name: formName,
         category: formCategory,
+        categoryLabel: selectedCategoryMeta?.label || existingEditingProduct?.categoryLabel,
         description: formDescription,
         price: priceNum,
         compareAtPrice: compareNum,
@@ -902,6 +928,7 @@ export function AdminDashboardView({
             ? ([
                 { id: 'analytics', label: 'Estadísticas', icon: BarChart3 },
                 { id: 'inventory', label: 'Inventario', icon: Package },
+                { id: 'categories', label: 'Rubros', icon: FolderTree },
                 { id: 'orders', label: 'Pedidos y Envíos', icon: Truck },
                 { id: 'shipping', label: 'Tarifas de Envío', icon: Settings },
                 { id: 'push', label: 'Alertas Push', icon: Bell },
@@ -2054,6 +2081,17 @@ export function AdminDashboardView({
         />
       )}
 
+      {/* TAB: RUBROS / CATEGORIES ABM (Admin only) */}
+      {activeTab === 'categories' && isAdmin && (
+        <AdminCategoriesPanel
+          isAdmin={isAdmin}
+          categories={categories}
+          products={products}
+          onNotifyToast={onNotifyToast}
+          onRefreshLocalData={onRefreshLocalData}
+        />
+      )}
+
       {/* TAB 8: DATABASE BACKUP & RESTORE (Local, LAN & Cloud — Admin only) */}
       {activeTab === 'backups' && isAdmin && (
         <DatabaseBackupPanel
@@ -2137,11 +2175,30 @@ export function AdminDashboardView({
                     onChange={(e) => setFormCategory(e.target.value as CategoryId)}
                     className="w-full px-3 py-2 text-sm bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
                   >
-                    {CATEGORIES.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.label}
-                      </option>
-                    ))}
+                    {(() => {
+                      const selectable = categories.filter(
+                        (c) => c.active !== false || c.id === formCategory,
+                      );
+                      const hasSelected = selectable.some((c) => c.id === formCategory);
+                      const list = hasSelected
+                        ? selectable
+                        : [
+                            ...selectable,
+                            {
+                              id: formCategory,
+                              label: formCategory,
+                              shortLabel: formCategory,
+                              description: '',
+                              active: false,
+                            },
+                          ];
+                      return list.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.label}
+                          {c.active === false ? ' (Oculto)' : ''}
+                        </option>
+                      ));
+                    })()}
                   </select>
                 </div>
               </div>

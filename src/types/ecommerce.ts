@@ -1,18 +1,16 @@
 import type { Timestamp } from 'firebase/firestore';
 
-export type CategoryId =
-  | 'tecnologia'
-  | 'hogar'
-  | 'indumentaria'
-  | 'relojeria'
-  | 'deportes'
-  | 'gourmet';
+export type CategoryId = string;
 
 export interface CategoryDefinition {
   id: CategoryId;
   label: string;
   shortLabel: string;
   description: string;
+  active?: boolean;
+  sortOrder?: number;
+  createdAt?: Timestamp | string;
+  updatedAt?: Timestamp | string;
 }
 
 export const CATEGORIES: CategoryDefinition[] = [
@@ -21,45 +19,57 @@ export const CATEGORIES: CategoryDefinition[] = [
     label: 'Tecnología & Audio',
     shortLabel: 'Tecnología',
     description: 'Auriculares de estudio, parlantes y periféricos de precisión.',
+    active: true,
+    sortOrder: 0,
   },
   {
     id: 'hogar',
     label: 'Hogar & Diseño',
     shortLabel: 'Hogar',
     description: 'Iluminación arquitectónica y objetos funcionales para espacios modernos.',
+    active: true,
+    sortOrder: 1,
   },
   {
     id: 'indumentaria',
     label: 'Indumentaria Urbana',
     shortLabel: 'Indumentaria',
     description: 'Prendas técnicas impermeables y básicos de sastrería contemporánea.',
+    active: true,
+    sortOrder: 2,
   },
   {
     id: 'relojeria',
     label: 'Relojería & Accesorios',
     shortLabel: 'Relojería',
     description: 'Cronógrafos automáticos, marroquinería y piezas de acero cepillado.',
+    active: true,
+    sortOrder: 3,
   },
   {
     id: 'deportes',
     label: 'Deportes & Outdoor',
     shortLabel: 'Deportes',
     description: 'Mochilas técnicas, equipamiento urbano y accesorios de expedición.',
+    active: true,
+    sortOrder: 4,
   },
   {
     id: 'gourmet',
     label: 'Café & Gourmet',
     shortLabel: 'Gourmet',
     description: 'Pavas de cuello de cisne, métodos de filtrado y selección barista.',
+    active: true,
+    sortOrder: 5,
   },
 ];
 
-export const CATEGORY_MAP: Record<CategoryId, CategoryDefinition> = CATEGORIES.reduce(
+export const CATEGORY_MAP: Record<string, CategoryDefinition> = CATEGORIES.reduce(
   (acc, item) => {
     acc[item.id] = item;
     return acc;
   },
-  {} as Record<CategoryId, CategoryDefinition>,
+  {} as Record<string, CategoryDefinition>,
 );
 
 export interface Product {
@@ -381,6 +391,7 @@ export type ActiveView = 'catalog' | 'tracking' | 'notifications' | 'admin';
 export type AdminTab =
   | 'analytics'
   | 'inventory'
+  | 'categories'
   | 'orders'
   | 'shipping'
   | 'push'

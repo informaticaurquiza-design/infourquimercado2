@@ -29,6 +29,7 @@ import {
   isValidImageSource,
 } from '../lib/imageTools';
 import {
+  CATEGORY_SLUG_PATTERN,
   FREE_SHIPPING_THRESHOLD,
   ID_PATTERN,
   MONTHLY_SUBSCRIPTION_COST,
@@ -41,7 +42,9 @@ import {
   generateTrackingCode,
   generateTransactionId,
   getPreviousShipmentStatus,
+  slugifyCategoryId,
   validateBenefitInput,
+  validateCategoryInput,
   validateDeliveryAgentInput,
   validateProductInput,
 } from '../lib/validation';
@@ -51,6 +54,7 @@ import type {
   AssignedCourier,
   BenefitType,
   CartItem,
+  CategoryDefinition,
   CategoryId,
   CustomerBenefit,
   DatabaseBackupPayload,
@@ -72,7 +76,7 @@ import type {
   TrackingEvent,
   UserProfile,
 } from '../types/ecommerce';
-import { CATEGORY_MAP, SHIPMENT_PIPELINE } from '../types/ecommerce';
+import { CATEGORIES, CATEGORY_MAP, SHIPMENT_PIPELINE } from '../types/ecommerce';
 
 function safeId(prefix: string): string {
   const rand = Math.random().toString(36).slice(2, 8);
@@ -496,6 +500,7 @@ export async function createOrUpdateProduct(
     sku: string;
     name: string;
     category: CategoryId;
+    categoryLabel?: string;
     description: string;
     price: number;
     compareAtPrice?: number;
@@ -517,7 +522,11 @@ export async function createOrUpdateProduct(
     sellerBankAccountHolder?: string;
   },
 ): Promise<void> {
-  const validationError = validateProductInput(productInput);
+  const normalizedCategory = String(productInput.category || '').trim().toLowerCase();
+  const validationError = validateProductInput({
+    ...productInput,
+    category: normalizedCategory,
+  });
   if (validationError) {
     throw new Error(validationError);
   }
@@ -525,7 +534,11 @@ export async function createOrUpdateProduct(
   const productId = productInput.id || safeId('prod');
   const productPath = `products/${productId}`;
   const ref = doc(db, 'products', productId);
-  const categoryDef = CATEGORY_MAP[productInput.category];
+  const categoryDef = CATEGORY_MAP[normalizedCategory];
+  const resolvedCategoryLabel = clampString(
+    productInput.categoryLabel?.trim() || categoryDef?.label || normalizedCategory,
+    48,
+  );
   const cleanSpecs = productInput.specs
     .map((s) => clampString(s, 120))
     .filter((s) => s.length > 0)
@@ -544,7 +557,7 @@ export async function createOrUpdateProduct(
     rawImages.push(productInput.imageUrl.trim());
   }
   if (rawImages.length === 0) {
-    rawImages.push(getDefaultCategoryImage(productInput.category));
+    rawImages.push(getDefaultCategoryImage(normalizedCategory));
   }
 
   const validImages = rawImages.slice(0, MAX_PRODUCT_IMAGES);
@@ -559,8 +572,8 @@ export async function createOrUpdateProduct(
   const commonFields: Record<string, unknown> = {
     sku: clampString(productInput.sku.toUpperCase(), 32),
     name: clampString(productInput.name, 120),
-    category: productInput.category,
-    categoryLabel: clampString(categoryDef.label, 48),
+    category: normalizedCategory,
+    categoryLabel: resolvedCategoryLabel,
     description: clampString(productInput.description, 800),
     price: Math.round(productInput.price),
     stock: Math.round(productInput.stock),
@@ -942,6 +955,141 @@ export async function deleteBenefitById(benefitId: string): Promise<void> {
   }
 }
 
+export async function seedDefaultCategoriesIfEmpty(): Promise<void> {
+  const path = 'categories';
+  try {
+    const existingSnap = await getDocs(collection(db, 'categories'));
+    if (!existingSnap.empty) return;
+    const batch = writeBatch(db);
+    CATEGORIES.forEach((cat, idx) => {
+      batch.set(doc(db, 'categories', cat.id), {
+        label: clampString(cat.label, 48),
+        shortLabel: clampString(cat.shortLabel, 28),
+        description: clampString(cat.description, 200),
+        active: true,
+        sortOrder: idx,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    });
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function createOrUpdateCategory(input: {
+  id?: string;
+  isEditing?: boolean;
+  label: string;
+  shortLabel: string;
+  description: string;
+  active: boolean;
+  sortOrder: number;
+}): Promise<CategoryDefinition> {
+  const label = clampString(input.label, 48);
+  const shortLabel = clampString(input.shortLabel || label, 28);
+  const description = clampString(input.description, 200);
+  const categoryId = slugifyCategoryId(input.id?.trim() || label);
+  const sortOrder = Math.max(0, Math.min(1000, Math.round(Number(input.sortOrder ?? 0))));
+  const active = Boolean(input.active);
+
+  const errMsg = validateCategoryInput({
+    id: categoryId,
+    label,
+    shortLabel,
+    description,
+    sortOrder,
+  });
+  if (errMsg) {
+    throw new Error(errMsg);
+  }
+
+  const categoryPath = `categories/${categoryId}`;
+  const ref = doc(db, 'categories', categoryId);
+  const nowIso = new Date().toISOString();
+
+  const commonFields = {
+    label,
+    shortLabel,
+    description,
+    active,
+    sortOrder,
+    updatedAt: serverTimestamp(),
+  };
+
+  try {
+    const existingSnap = await getDoc(ref);
+    if (input.isEditing) {
+      if (!existingSnap.exists()) {
+        await setDoc(ref, {
+          ...commonFields,
+          createdAt: serverTimestamp(),
+        });
+      } else {
+        await updateDoc(ref, commonFields);
+      }
+
+      // Sync categoryLabel on existing products assigned to this rubro
+      const prodSnap = await getDocs(
+        query(collection(db, 'products'), where('category', '==', categoryId)),
+      );
+      if (!prodSnap.empty) {
+        const batch = writeBatch(db);
+        let dirty = 0;
+        prodSnap.docs.forEach((d) => {
+          if (d.data()?.categoryLabel !== label) {
+            batch.update(d.ref, {
+              categoryLabel: label,
+              updatedAt: serverTimestamp(),
+            });
+            dirty += 1;
+          }
+        });
+        if (dirty > 0) {
+          await batch.commit();
+        }
+      }
+    } else {
+      if (existingSnap.exists()) {
+        throw new Error('Ya existe un rubro con ese identificador.');
+      }
+      await setDoc(ref, {
+        ...commonFields,
+        createdAt: serverTimestamp(),
+      });
+    }
+
+    return {
+      id: categoryId,
+      label,
+      shortLabel,
+      description,
+      active,
+      sortOrder,
+      updatedAt: nowIso,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Ya existe un rubro con ese identificador.') {
+      throw error;
+    }
+    handleFirestoreError(
+      error,
+      input.isEditing ? OperationType.UPDATE : OperationType.CREATE,
+      categoryPath,
+    );
+  }
+}
+
+export async function deleteCategoryById(categoryId: string): Promise<void> {
+  const categoryPath = `categories/${categoryId}`;
+  try {
+    await deleteDoc(doc(db, 'categories', categoryId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, categoryPath);
+  }
+}
+
 export async function cancelCustomerOrder(order: Order): Promise<void> {
   const orderPath = `orders/${order.id}`;
   const cancelEvent: TrackingEvent = {
@@ -1244,8 +1392,8 @@ export async function restoreCloudDatabaseBackup(
       for (const raw of body.products.slice(0, 1000)) {
         if (!raw || typeof raw !== 'object') continue;
         const item = raw as Record<string, unknown>;
-        const cat = String(item.category || '') as CategoryId;
-        if (!Object.prototype.hasOwnProperty.call(CATEGORY_MAP, cat)) continue;
+        const cat = String(item.category || '').trim().toLowerCase() as CategoryId;
+        if (!CATEGORY_SLUG_PATTERN.test(cat)) continue;
         const price = Math.round(Number(item.price));
         if (!Number.isFinite(price) || price <= 0 || price > 100000000) continue;
 
@@ -1290,11 +1438,18 @@ export async function restoreCloudDatabaseBackup(
             ? existingProductCreated.get(cleanId)
             : serverTimestamp();
 
+        const restoredCategoryLabel = clampString(
+          (typeof item.categoryLabel === 'string' && item.categoryLabel.trim()) ||
+            CATEGORY_MAP[cat]?.label ||
+            cat,
+          48,
+        );
+
         const prodDoc: Record<string, unknown> = {
           sku,
           name,
           category: cat,
-          categoryLabel: clampString(CATEGORY_MAP[cat].label, 48),
+          categoryLabel: restoredCategoryLabel,
           description,
           price,
           stock: Math.max(0, Math.min(100000, Math.round(Number(item.stock) || 0))),

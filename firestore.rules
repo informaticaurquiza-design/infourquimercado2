@@ -85,7 +85,7 @@ service cloud.firestore {
       ])
       && data.sku is string && data.sku.size() >= 3 && data.sku.size() <= 32 && data.sku.matches('^[A-Z0-9\\-]+$')
       && data.name is string && data.name.size() >= 2 && data.name.size() <= 120
-      && data.category is string && data.category in ['tecnologia', 'hogar', 'indumentaria', 'relojeria', 'deportes', 'gourmet']
+      && data.category is string && data.category.size() >= 2 && data.category.size() <= 40 && data.category.matches('^[a-z0-9][a-z0-9_\\-]{1,39}$')
       && data.categoryLabel is string && data.categoryLabel.size() >= 2 && data.categoryLabel.size() <= 48
       && data.description is string && data.description.size() >= 5 && data.description.size() <= 800
       && data.price is number && data.price > 0 && data.price <= 100000000
@@ -353,6 +353,22 @@ service cloud.firestore {
       && data.freeShippingThreshold is number && data.freeShippingThreshold >= 0 && data.freeShippingThreshold <= 100000000
       && data.standardShippingCost is number && data.standardShippingCost >= 0 && data.standardShippingCost <= 10000000
       && isValidId(data.updatedBy)
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidCategory(data) {
+      return data.keys().hasAll([
+        'label', 'shortLabel', 'description', 'active', 'sortOrder', 'createdAt', 'updatedAt'
+      ])
+      && data.keys().hasOnly([
+        'label', 'shortLabel', 'description', 'active', 'sortOrder', 'createdAt', 'updatedAt'
+      ])
+      && data.label is string && data.label.size() >= 2 && data.label.size() <= 48
+      && data.shortLabel is string && data.shortLabel.size() >= 2 && data.shortLabel.size() <= 28
+      && data.description is string && data.description.size() >= 3 && data.description.size() <= 200
+      && data.active is bool
+      && data.sortOrder is int && data.sortOrder >= 0 && data.sortOrder <= 1000
+      && data.createdAt is timestamp
       && data.updatedAt is timestamp;
     }
 
@@ -691,6 +707,33 @@ service cloud.firestore {
           isAdmin()
           || ('createdBy' in existing() && existing().createdBy == request.auth.uid)
         );
+    }
+
+    // --- Collection: categories (Rubros — Admin-Only Management) ---
+    match /categories/{categoryId} {
+      allow get: if isValidId(categoryId) && (
+        existing().active == true
+        || isAdmin()
+      );
+      allow list: if existing().active == true
+        || isBootstrappedAdmin();
+      allow create: if isValidId(categoryId)
+        && categoryId.size() >= 2 && categoryId.size() <= 40
+        && categoryId.matches('^[a-z0-9][a-z0-9_\\-]{1,39}$')
+        && isVerifiedUser()
+        && isValidCategory(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow update: if isValidId(categoryId)
+        && isVerifiedUser()
+        && isValidCategory(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow delete: if isValidId(categoryId)
+        && isVerifiedUser()
+        && isAdmin();
     }
   }
 }

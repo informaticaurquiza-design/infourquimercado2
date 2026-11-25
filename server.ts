@@ -44,6 +44,7 @@ import {
   isValidImageSource,
 } from './src/lib/imageTools.ts';
 import {
+  CATEGORY_SLUG_PATTERN,
   ID_PATTERN,
   MONTHLY_SUBSCRIPTION_COST,
   clampString,
@@ -53,7 +54,9 @@ import {
   generateTransactionId,
   getAccountSubscriptionInfo,
   getPreviousShipmentStatus,
+  slugifyCategoryId,
   validateBenefitInput,
+  validateCategoryInput,
   validateDeliveryAgentInput,
   validateProductInput,
 } from './src/lib/validation.ts';
@@ -63,6 +66,7 @@ import {
   type AppNotification,
   type AssignedCourier,
   type BenefitType,
+  type CategoryDefinition,
   type CategoryId,
   type CustomerBenefit,
   type DeliveryAgent,
@@ -206,6 +210,7 @@ const sseClients = new Set<Response>();
 
 function broadcastDbChange(
   topic:
+    | 'categories'
     | 'products'
     | 'orders'
     | 'notifications'
@@ -311,8 +316,31 @@ function normalizeIsoTimestamp(value: unknown, fallbackIso: string): string {
   return fallbackIso;
 }
 
-function isValidCategory(cat: unknown): cat is CategoryId {
-  return typeof cat === 'string' && Object.prototype.hasOwnProperty.call(CATEGORY_MAP, cat);
+function isValidCategory(cat: unknown, categories?: CategoryDefinition[]): cat is CategoryId {
+  if (typeof cat !== 'string') return false;
+  const trimmed = cat.trim().toLowerCase();
+  if (!CATEGORY_SLUG_PATTERN.test(trimmed)) return false;
+  if (categories && categories.length > 0) {
+    return (
+      categories.some((c) => c.id === trimmed) ||
+      Object.prototype.hasOwnProperty.call(CATEGORY_MAP, trimmed)
+    );
+  }
+  return true;
+}
+
+function resolveCategoryLabel(
+  catId: string,
+  categories: CategoryDefinition[],
+  fallbackLabel?: unknown,
+): string {
+  const found = categories.find((c) => c.id === catId);
+  if (found?.label) return clampString(found.label, 48);
+  if (CATEGORY_MAP[catId]?.label) return clampString(CATEGORY_MAP[catId].label, 48);
+  if (typeof fallbackLabel === 'string' && fallbackLabel.trim().length >= 2) {
+    return clampString(fallbackLabel.trim(), 48);
+  }
+  return clampString(catId, 48);
 }
 
 function isLocalUserSubscriptionActive(user: StoredLocalUser | undefined): boolean {
@@ -977,10 +1005,15 @@ app.get('/api/local/bootstrap', (req, res) => {
         )
       : db.benefits.filter((b) => b.targetUserId === 'all');
 
+  const categories = (
+    isAdmin ? [...db.categories] : db.categories.filter((c) => c.active !== false)
+  ).sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999) || a.label.localeCompare(b.label));
+
   const userRecord = session ? db.users.find((u) => u.uid === session.uid) : null;
   const profile = userRecord ? toPublicProfile(userRecord) : null;
 
   res.json({
+    categories,
     products,
     orders,
     notifications,
@@ -992,6 +1025,183 @@ app.get('/api/local/bootstrap', (req, res) => {
     profile,
     isAdmin,
   });
+});
+
+// --- API: Categories / Rubros CRUD (Admin Only) ---
+
+app.post('/api/local/categories', async (req, res) => {
+  const session = requireAdmin(req, res);
+  if (!session) return;
+
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const label = clampString(String(body.label || ''), 48);
+    const shortLabel = clampString(String(body.shortLabel || label), 28);
+    const description = clampString(String(body.description || ''), 200);
+    const rawId = typeof body.id === 'string' && body.id.trim() ? body.id.trim() : label;
+    const id = slugifyCategoryId(rawId);
+    const sortOrder = Math.max(0, Math.min(1000, Math.round(Number(body.sortOrder ?? 0))));
+    const active = body.active !== false;
+
+    const errMsg = validateCategoryInput({ id, label, shortLabel, description, sortOrder });
+    if (errMsg) {
+      res.status(400).json({ error: errMsg });
+      return;
+    }
+
+    const created = await withDbWriteLock((db) => {
+      if (db.categories.some((c) => c.id === id)) {
+        throw new Error('DUPLICATE_ID');
+      }
+      if (db.categories.some((c) => c.label.toLowerCase() === label.toLowerCase())) {
+        throw new Error('DUPLICATE_LABEL');
+      }
+      const nowIso = new Date().toISOString();
+      const next: CategoryDefinition = {
+        id,
+        label,
+        shortLabel,
+        description,
+        active,
+        sortOrder,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+      db.categories.push(next);
+      return next;
+    });
+
+    broadcastDbChange('categories');
+    res.status(201).json(created);
+  } catch (err) {
+    if (err instanceof Error && err.message === 'DUPLICATE_ID') {
+      res.status(409).json({ error: 'Ya existe un rubro con ese identificador.' });
+      return;
+    }
+    if (err instanceof Error && err.message === 'DUPLICATE_LABEL') {
+      res.status(409).json({ error: 'Ya existe un rubro con ese nombre.' });
+      return;
+    }
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Error al crear rubro.' });
+  }
+});
+
+app.put('/api/local/categories/:id', async (req, res) => {
+  const session = requireAdmin(req, res);
+  if (!session) return;
+
+  try {
+    const categoryId = String(req.params.id || '').trim().toLowerCase();
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const label = clampString(String(body.label || ''), 48);
+    const shortLabel = clampString(String(body.shortLabel || label), 28);
+    const description = clampString(String(body.description || ''), 200);
+    const sortOrder = Math.max(0, Math.min(1000, Math.round(Number(body.sortOrder ?? 0))));
+    const active = body.active !== false;
+
+    const errMsg = validateCategoryInput({
+      id: categoryId,
+      label,
+      shortLabel,
+      description,
+      sortOrder,
+    });
+    if (errMsg) {
+      res.status(400).json({ error: errMsg });
+      return;
+    }
+
+    let touchedProducts = false;
+    const updated = await withDbWriteLock((db) => {
+      const idx = db.categories.findIndex((c) => c.id === categoryId);
+      if (idx === -1) throw new Error('NOT_FOUND');
+      if (
+        db.categories.some(
+          (c, i) => i !== idx && c.label.toLowerCase() === label.toLowerCase(),
+        )
+      ) {
+        throw new Error('DUPLICATE_LABEL');
+      }
+      const existing = db.categories[idx];
+      const nowIso = new Date().toISOString();
+      const next: CategoryDefinition = {
+        ...existing,
+        id: existing.id,
+        label,
+        shortLabel,
+        description,
+        active,
+        sortOrder,
+        updatedAt: nowIso,
+      };
+      db.categories[idx] = next;
+
+      if (existing.label !== label) {
+        for (const p of db.products) {
+          if (p.category === existing.id) {
+            p.categoryLabel = label;
+            p.updatedAt = nowIso;
+            touchedProducts = true;
+          }
+        }
+      }
+      return next;
+    });
+
+    broadcastDbChange('categories');
+    if (touchedProducts) {
+      broadcastDbChange('products');
+    }
+    res.json(updated);
+  } catch (err) {
+    if (err instanceof Error && err.message === 'NOT_FOUND') {
+      res.status(404).json({ error: 'Rubro no encontrado.' });
+      return;
+    }
+    if (err instanceof Error && err.message === 'DUPLICATE_LABEL') {
+      res.status(409).json({ error: 'Ya existe otro rubro con ese nombre.' });
+      return;
+    }
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Error al actualizar rubro.' });
+  }
+});
+
+app.delete('/api/local/categories/:id', async (req, res) => {
+  const session = requireAdmin(req, res);
+  if (!session) return;
+
+  const categoryId = String(req.params.id || '').trim().toLowerCase();
+  try {
+    await withDbWriteLock((db) => {
+      const exists = db.categories.some((c) => c.id === categoryId);
+      if (!exists) throw new Error('NOT_FOUND');
+      if (db.categories.length <= 1) throw new Error('LAST_CATEGORY');
+      const assignedCount = db.products.filter((p) => p.category === categoryId).length;
+      if (assignedCount > 0) throw new Error(`IN_USE:${assignedCount}`);
+      db.categories = db.categories.filter((c) => c.id !== categoryId);
+    });
+  } catch (err) {
+    if (err instanceof Error && err.message === 'NOT_FOUND') {
+      res.status(404).json({ error: 'Rubro no encontrado.' });
+      return;
+    }
+    if (err instanceof Error && err.message === 'LAST_CATEGORY') {
+      res.status(400).json({ error: 'Debe quedar al menos un rubro activo en el catálogo.' });
+      return;
+    }
+    if (err instanceof Error && err.message.startsWith('IN_USE:')) {
+      const count = err.message.split(':')[1] || '1';
+      res.status(409).json({
+        error: `No podés eliminar este rubro porque tiene ${count} producto(s) asignado(s). Reasigná esos productos primero.`,
+      });
+      return;
+    }
+    res.status(400).json({ error: 'Error al eliminar rubro.' });
+    return;
+  }
+
+  broadcastDbChange('categories');
+  res.json({ ok: true });
 });
 
 // --- API: Products CRUD (Admin Only) ---
@@ -1030,7 +1240,8 @@ app.post('/api/local/products', async (req, res) => {
 
   try {
     const body = req.body ?? {};
-    if (!isValidCategory(body.category)) {
+    const currentDb = loadLocalDb();
+    if (!isValidCategory(body.category, currentDb.categories)) {
       res.status(400).json({ error: 'Rubro inválido.' });
       return;
     }
@@ -1038,7 +1249,7 @@ app.post('/api/local/products', async (req, res) => {
     const input = {
       sku: String(body.sku || '').toUpperCase(),
       name: String(body.name || ''),
-      category: body.category as CategoryId,
+      category: String(body.category).trim().toLowerCase() as CategoryId,
       description: String(body.description || ''),
       price: Number(body.price),
       stock: Number(body.stock),
@@ -1103,7 +1314,7 @@ app.post('/api/local/products', async (req, res) => {
         sku: clampString(input.sku, 32),
         name: clampString(input.name, 120),
         category: input.category,
-        categoryLabel: clampString(CATEGORY_MAP[input.category].label, 48),
+        categoryLabel: resolveCategoryLabel(input.category, db.categories, body.categoryLabel),
         description: clampString(input.description, 800),
         price: Math.round(input.price),
         compareAtPrice:
@@ -1157,7 +1368,8 @@ app.put('/api/local/products/:id', async (req, res) => {
   try {
     const productId = String(req.params.id || '');
     const body = req.body ?? {};
-    if (!isValidCategory(body.category)) {
+    const currentDb = loadLocalDb();
+    if (!isValidCategory(body.category, currentDb.categories)) {
       res.status(400).json({ error: 'Rubro inválido.' });
       return;
     }
@@ -1165,7 +1377,7 @@ app.put('/api/local/products/:id', async (req, res) => {
     const input = {
       sku: String(body.sku || '').toUpperCase(),
       name: String(body.name || ''),
-      category: body.category as CategoryId,
+      category: String(body.category).trim().toLowerCase() as CategoryId,
       description: String(body.description || ''),
       price: Number(body.price),
       stock: Number(body.stock),
@@ -1220,7 +1432,7 @@ app.put('/api/local/products/:id', async (req, res) => {
         sku: clampString(input.sku, 32),
         name: clampString(input.name, 120),
         category: input.category,
-        categoryLabel: clampString(CATEGORY_MAP[input.category].label, 48),
+        categoryLabel: resolveCategoryLabel(input.category, db.categories, body.categoryLabel),
         description: clampString(input.description, 800),
         price: Math.round(input.price),
         compareAtPrice:
@@ -2744,7 +2956,7 @@ function sanitizeBackupPayloadForLocalRestore(
         sku: rawSku.length >= 3 ? rawSku : `SKU-${Math.floor(100 + Math.random() * 900)}`,
         name: clampString(String(item.name || 'Producto'), 120),
         category: item.category,
-        categoryLabel: clampString(CATEGORY_MAP[item.category].label, 48),
+        categoryLabel: resolveCategoryLabel(item.category, loadLocalDb().categories, item.categoryLabel),
         description: clampString(String(item.description || 'Producto restaurado.'), 800),
         price,
         compareAtPrice:
@@ -3584,7 +3796,10 @@ function decodeBase64ProductImage(
 
 function toPublicShareProduct(p: Product): PublicShareProduct {
   const gallery = getProductGallery(p);
-  const category = (p.category in CATEGORY_MAP ? p.category : 'tecnologia') as CategoryId;
+  const rawCategory = typeof p.category === 'string' ? p.category.trim().toLowerCase() : '';
+  const category = (
+    CATEGORY_SLUG_PATTERN.test(rawCategory) ? rawCategory : 'tecnologia'
+  ) as CategoryId;
   return {
     id: p.id,
     sku: p.sku || '',
@@ -3663,8 +3878,10 @@ async function findPublicShareProductById(productId: string): Promise<PublicShar
       if (!fields || typeof fields !== 'object') return null;
       if (fields.active && !readFirestoreBool(fields, 'active')) return null;
 
-      const rawCategory = readFirestoreString(fields, 'category');
-      const category = (rawCategory in CATEGORY_MAP ? rawCategory : 'tecnologia') as CategoryId;
+      const rawCategory = readFirestoreString(fields, 'category').trim().toLowerCase();
+      const category = (
+        CATEGORY_SLUG_PATTERN.test(rawCategory) ? rawCategory : 'tecnologia'
+      ) as CategoryId;
       const imageUrl = readFirestoreString(fields, 'imageUrl');
       const images = readFirestoreStringArray(fields, 'images');
       const gallery = getProductGallery({ imageUrl, images });

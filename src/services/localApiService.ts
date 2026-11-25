@@ -7,6 +7,7 @@ import type {
   AssignedCourier,
   BenefitType,
   CartItem,
+  CategoryDefinition,
   CategoryId,
   CloudflareTunnelStatus,
   CustomerBenefit,
@@ -78,6 +79,7 @@ export async function fetchLocalServerInfo(): Promise<LocalServerInfo | null> {
 }
 
 export interface LocalBootstrapPayload {
+  categories?: CategoryDefinition[];
   products: Product[];
   orders: Order[];
   notifications: AppNotification[];
@@ -222,6 +224,7 @@ export async function localCreateOrUpdateProduct(productInput: {
   sku: string;
   name: string;
   category: CategoryId;
+  categoryLabel?: string;
   description: string;
   price: number;
   compareAtPrice?: number;
@@ -381,6 +384,36 @@ export async function localCreateOrUpdateBenefit(input: {
 
 export async function localDeleteBenefit(benefitId: string): Promise<void> {
   await apiRequest(`/api/local/benefits/${encodeURIComponent(benefitId)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function localCreateOrUpdateCategory(input: {
+  id?: string;
+  isEditing?: boolean;
+  label: string;
+  shortLabel: string;
+  description: string;
+  active: boolean;
+  sortOrder: number;
+}): Promise<CategoryDefinition> {
+  if (input.isEditing && input.id) {
+    return apiRequest<CategoryDefinition>(
+      `/api/local/categories/${encodeURIComponent(input.id)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      },
+    );
+  }
+  return apiRequest<CategoryDefinition>('/api/local/categories', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function localDeleteCategory(categoryId: string): Promise<void> {
+  await apiRequest(`/api/local/categories/${encodeURIComponent(categoryId)}`, {
     method: 'DELETE',
   });
 }

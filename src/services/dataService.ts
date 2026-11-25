@@ -9,6 +9,7 @@ import type {
   AssignedCourier,
   BenefitType,
   CartItem,
+  CategoryDefinition,
   CategoryId,
   CustomerBenefit,
   DatabaseMode,
@@ -32,10 +33,12 @@ import {
   advanceOrderShipmentStatus as cloudAdvanceOrderShipmentStatus,
   cancelCustomerOrder as cloudCancelCustomerOrder,
   createOrUpdateBenefit as cloudCreateOrUpdateBenefit,
+  createOrUpdateCategory as cloudCreateOrUpdateCategory,
   createOrUpdateDeliveryAgent as cloudCreateOrUpdateDeliveryAgent,
   createOrUpdateProduct as cloudCreateOrUpdateProduct,
   createOrderWithInventoryUpdate as cloudCreateOrderWithInventoryUpdate,
   deleteBenefitById as cloudDeleteBenefitById,
+  deleteCategoryById as cloudDeleteCategoryById,
   deleteDeliveryAgentById as cloudDeleteDeliveryAgentById,
   deleteNotificationById as cloudDeleteNotificationById,
   deleteProductById as cloudDeleteProductById,
@@ -55,10 +58,12 @@ import {
   localCancelOrder,
   localChangePassword,
   localCreateOrUpdateBenefit,
+  localCreateOrUpdateCategory,
   localCreateOrUpdateDeliveryAgent,
   localCreateOrUpdateProduct,
   localCreateOrder,
   localDeleteBenefit,
+  localDeleteCategory,
   localDeleteDeliveryAgent,
   localDeleteNotification,
   localDeleteProduct,
@@ -202,6 +207,7 @@ export async function createOrUpdateProduct(productInput: {
   sku: string;
   name: string;
   category: CategoryId;
+  categoryLabel?: string;
   description: string;
   price: number;
   compareAtPrice?: number;
@@ -320,6 +326,29 @@ export async function deleteBenefitById(benefitId: string): Promise<void> {
     return;
   }
   await cloudDeleteBenefitById(benefitId);
+}
+
+export async function createOrUpdateCategory(input: {
+  id?: string;
+  isEditing?: boolean;
+  label: string;
+  shortLabel: string;
+  description: string;
+  active: boolean;
+  sortOrder: number;
+}): Promise<CategoryDefinition> {
+  if (currentDbMode === 'local') {
+    return localCreateOrUpdateCategory(input);
+  }
+  return cloudCreateOrUpdateCategory(input);
+}
+
+export async function deleteCategoryById(categoryId: string): Promise<void> {
+  if (currentDbMode === 'local') {
+    await localDeleteCategory(categoryId);
+    return;
+  }
+  await cloudDeleteCategoryById(categoryId);
 }
 
 export async function cancelCustomerOrder(order: Order): Promise<void> {

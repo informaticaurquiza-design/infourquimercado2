@@ -27,8 +27,10 @@ import {
   getProductActiveBenefit,
 } from '../lib/validation';
 import {
+  CATEGORIES,
   CATEGORY_MAP,
   type AppUser,
+  type CategoryDefinition,
   type CategoryId,
   type CustomerBenefit,
   type Product,
@@ -38,6 +40,7 @@ import { CategorySidebar } from './CategorySidebar';
 import { ProductImage } from './ProductImage';
 
 interface StorefrontViewProps {
+  categories?: CategoryDefinition[];
   products: Product[];
   loading: boolean;
   shippingSettings: StoreSettings;
@@ -76,6 +79,7 @@ function shuffleItems<T>(items: T[]): T[] {
 }
 
 export function StorefrontView({
+  categories = CATEGORIES,
   products,
   loading,
   shippingSettings,
@@ -419,7 +423,11 @@ export function StorefrontView({
     setSearchQuery('');
   }
 
-  const activeCategoryMeta = selectedCategory === 'all' ? null : CATEGORY_MAP[selectedCategory];
+  const activeCategoryMeta =
+    selectedCategory === 'all'
+      ? null
+      : categories.find((c) => c.id === selectedCategory) ?? CATEGORY_MAP[selectedCategory] ?? null;
+  const heroQuickCategory = categories[0] ?? null;
 
   // Keep selectedProduct synced with real-time stock from products array
   const liveSelectedProduct = selectedProduct
@@ -443,8 +451,8 @@ export function StorefrontView({
                 Objetos diseñados para durar, con inventario en vivo.
               </h1>
               <p className="text-base text-zinc-600 leading-relaxed max-w-lg mb-8">
-                Explorá seis rubros curados de tecnología, iluminación, relojería e indumentaria
-                técnica. Pagá en cuotas sin interés y seguí cada etapa de tu envío en tiempo real.
+                Explorá nuestros rubros curados con stock en tiempo real. Pagá en cuotas sin interés
+                y seguí cada etapa de tu envío en vivo.
               </p>
               <div className="flex flex-wrap items-center gap-3">
                 <a
@@ -454,16 +462,20 @@ export function StorefrontView({
                   Explorar catálogo
                   <ArrowDownRight className="w-4 h-4" />
                 </a>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onSelectCategory('tecnologia');
-                    document.getElementById('catalogo-principal')?.scrollIntoView({ behavior: 'smooth' });
-                  }}
-                  className="px-5 py-3 text-sm font-medium text-zinc-800 bg-white border border-zinc-300 hover:border-zinc-950 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-                >
-                  Ver Tecnología & Audio
-                </button>
+                {heroQuickCategory && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSelectCategory(heroQuickCategory.id);
+                      document
+                        .getElementById('catalogo-principal')
+                        ?.scrollIntoView({ behavior: 'smooth' });
+                    }}
+                    className="px-5 py-3 text-sm font-medium text-zinc-800 bg-white border border-zinc-300 hover:border-zinc-950 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+                  >
+                    Ver {heroQuickCategory.label}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -693,6 +705,7 @@ export function StorefrontView({
       {/* Main Catalog Workspace: Left Rubros Menu + Right Product Grid */}
       <section id="catalogo-principal" className="pt-10 flex flex-col lg:flex-row gap-8">
         <CategorySidebar
+          categories={categories}
           products={sidebarProducts}
           selectedCategory={selectedCategory}
           onSelectCategory={onSelectCategory}

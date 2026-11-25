@@ -83,6 +83,15 @@ export const HERO_BANNER_SLIDES: HeroBannerSlide[] = [
   },
 ];
 
+const DEFAULT_CATEGORY_IMAGES: Record<string, string> = {
+  tecnologia: ASSET_IMAGES.tecnologia,
+  hogar: ASSET_IMAGES.hogar,
+  indumentaria: ASSET_IMAGES.indumentaria,
+  relojeria: ASSET_IMAGES.relojeria,
+  deportes: ASSET_IMAGES.deportes,
+  gourmet: ASSET_IMAGES.gourmet,
+};
+
 export function getDefaultCategoryImage(category: CategoryId): string {
-  return ASSET_IMAGES[category] ?? ASSET_IMAGES.tecnologia;
+  return DEFAULT_CATEGORY_IMAGES[category] ?? ASSET_IMAGES.tecnologia;
 }

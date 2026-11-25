@@ -130,6 +130,48 @@ export function formatCardExpiry(value: string): string {
   return digits;
 }
 
+export const CATEGORY_SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]{1,39}$/;
+
+export function slugifyCategoryId(raw: string): string {
+  return raw
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+}
+
+export function validateCategoryInput(input: {
+  id: string;
+  label: string;
+  shortLabel: string;
+  description: string;
+  sortOrder: number;
+}): string | null {
+  const id = input.id.trim().toLowerCase();
+  if (!CATEGORY_SLUG_PATTERN.test(id)) {
+    return 'El identificador del rubro debe tener entre 2 y 40 caracteres (letras minúsculas, números y guiones).';
+  }
+  const label = input.label.trim();
+  if (label.length < 2 || label.length > 48) {
+    return 'El nombre del rubro debe tener entre 2 y 48 caracteres.';
+  }
+  const shortLabel = input.shortLabel.trim();
+  if (shortLabel.length < 2 || shortLabel.length > 28) {
+    return 'El nombre corto debe tener entre 2 y 28 caracteres.';
+  }
+  const description = input.description.trim();
+  if (description.length < 3 || description.length > 200) {
+    return 'La descripción del rubro debe tener entre 3 y 200 caracteres.';
+  }
+  if (!Number.isInteger(input.sortOrder) || input.sortOrder < 0 || input.sortOrder > 1000) {
+    return 'El orden debe ser un número entero entre 0 y 1000.';
+  }
+  return null;
+}
+
 export function validateProductInput(input: {
   sku: string;
   name: string;
@@ -145,6 +187,9 @@ export function validateProductInput(input: {
   }
   if (input.name.trim().length < 2 || input.name.trim().length > 120) {
     return 'El nombre del producto debe tener entre 2 y 120 caracteres.';
+  }
+  if (!CATEGORY_SLUG_PATTERN.test(String(input.category || '').trim())) {
+    return 'Seleccioná un rubro válido para el producto.';
   }
   if (input.description.trim().length < 5 || input.description.trim().length > 800) {
     return 'La descripción debe tener entre 5 y 800 caracteres.';

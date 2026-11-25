@@ -2,17 +2,19 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type {
-  AppNotification,
-  AppUser,
-  CustomerBenefit,
-  DeliveryAgent,
-  LocalBackupSnapshotMeta,
-  Order,
-  Product,
-  StoreSettings,
-  SubscriptionPayment,
-  UserProfile,
+import {
+  CATEGORIES,
+  type AppNotification,
+  type AppUser,
+  type CategoryDefinition,
+  type CustomerBenefit,
+  type DeliveryAgent,
+  type LocalBackupSnapshotMeta,
+  type Order,
+  type Product,
+  type StoreSettings,
+  type SubscriptionPayment,
+  type UserProfile,
 } from '../src/types/ecommerce.ts';
 
 export interface StoredLocalUser extends UserProfile {
@@ -21,6 +23,7 @@ export interface StoredLocalUser extends UserProfile {
 
 export interface LocalDatabaseSchema {
   version: number;
+  categories: CategoryDefinition[];
   products: Product[];
   orders: Order[];
   notifications: AppNotification[];
@@ -61,6 +64,19 @@ const revokedTokens = new Set<string>();
 let writeQueue: Promise<void> = Promise.resolve();
 let dbCache: LocalDatabaseSchema | null = null;
 
+function buildDefaultCategories(nowIso: string): CategoryDefinition[] {
+  return CATEGORIES.map((c, idx) => ({
+    id: c.id,
+    label: c.label,
+    shortLabel: c.shortLabel,
+    description: c.description,
+    active: true,
+    sortOrder: typeof c.sortOrder === 'number' ? c.sortOrder : idx,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  }));
+}
+
 function createSeedDatabase(): LocalDatabaseSchema {
   const nowIso = new Date().toISOString();
   const products: Product[] = [];
@@ -82,6 +98,7 @@ function createSeedDatabase(): LocalDatabaseSchema {
 
   return {
     version: 1,
+    categories: buildDefaultCategories(nowIso),
     products,
     orders: [],
     notifications,
@@ -115,6 +132,10 @@ export function loadLocalDb(): LocalDatabaseSchema {
       const fallback = createSeedDatabase();
       dbCache = {
         version: 1,
+        categories:
+          Array.isArray(parsed.categories) && parsed.categories.length > 0
+            ? parsed.categories
+            : fallback.categories,
         products: Array.isArray(parsed.products) ? parsed.products : fallback.products,
         orders: Array.isArray(parsed.orders) ? parsed.orders : [],
         notifications: Array.isArray(parsed.notifications)
@@ -339,6 +360,7 @@ export function buildLocalBackupObject(sourceMode: 'local' | 'lan') {
     version: db.version,
     exportedAt: new Date().toISOString(),
     sourceMode,
+    categories: db.categories,
     products: db.products,
     orders: db.orders,
     notifications: db.notifications,

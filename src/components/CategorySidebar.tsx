@@ -1,9 +1,10 @@
 import { Bell, Check, ChevronRight, SlidersHorizontal, Truck, X } from 'lucide-react';
 import type { PushPermissionState } from '../lib/pushNotifications';
 import { formatCurrency } from '../lib/validation';
-import { CATEGORIES, type CategoryId, type Product } from '../types/ecommerce';
+import { CATEGORIES, type CategoryDefinition, type CategoryId, type Product } from '../types/ecommerce';
 
 interface CategorySidebarProps {
+  categories?: CategoryDefinition[];
   products: Product[];
   selectedCategory: CategoryId | 'all';
   onSelectCategory: (cat: CategoryId | 'all') => void;
@@ -23,6 +24,7 @@ interface CategorySidebarProps {
 }
 
 export function CategorySidebar({
+  categories = CATEGORIES,
   products,
   selectedCategory,
   onSelectCategory,
@@ -40,7 +42,7 @@ export function CategorySidebar({
   mobileOpen,
   onCloseMobile,
 }: CategorySidebarProps) {
-  const categoryCounts = CATEGORIES.reduce(
+  const categoryCounts = categories.reduce(
     (acc, cat) => {
       acc[cat.id] = products.filter((p) => p.category === cat.id).length;
       return acc;
@@ -131,7 +133,7 @@ export function CategorySidebar({
           </span>
         </button>
 
-        {CATEGORIES.map((category) => {
+        {categories.map((category) => {
           const active = selectedCategory === category.id;
           const count = categoryCounts[category.id] || 0;
           return (

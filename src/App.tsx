@@ -47,6 +47,7 @@ import {
 import {
   checkIsAdmin,
   ensureUserProfile,
+  seedDefaultCategoriesIfEmpty,
   seedInitialStoreData,
   updateUserProfile as firestoreUpdateUserProfile,
 } from './services/firestoreService';
@@ -61,21 +62,23 @@ import {
   setLocalAuthToken,
   setupLocalAdmin,
 } from './services/localApiService';
-import type {
-  ActiveView,
-  AppNotification,
-  AppUser,
-  CartItem,
-  CategoryId,
-  CustomerBenefit,
-  DatabaseMode,
-  DeliveryAgent,
-  LocalServerInfo,
-  Order,
-  Product,
-  StoreSettings,
-  SubscriptionPayment,
-  UserProfile,
+import {
+  CATEGORIES,
+  type ActiveView,
+  type AppNotification,
+  type AppUser,
+  type CartItem,
+  type CategoryDefinition,
+  type CategoryId,
+  type CustomerBenefit,
+  type DatabaseMode,
+  type DeliveryAgent,
+  type LocalServerInfo,
+  type Order,
+  type Product,
+  type StoreSettings,
+  type SubscriptionPayment,
+  type UserProfile,
 } from './types/ecommerce';
 
 const DB_MODE_STORAGE_KEY = 'alba_db_mode';
@@ -215,6 +218,8 @@ function AppContent() {
   const [cloudAuthReady, setCloudAuthReady] = useState(false);
   const [cloudIsAdmin, setCloudIsAdmin] = useState(false);
   const [cloudProfile, setCloudProfile] = useState<UserProfile | null>(null);
+  const [cloudCategories, setCloudCategories] = useState<CategoryDefinition[]>([]);
+  const seededCategoriesRef = useRef(false);
   const [firestoreProducts, setFirestoreProducts] = useState<Product[]>([]);
   const [cloudSellerOwnProducts, setCloudSellerOwnProducts] = useState<Product[]>([]);
   const [cloudProductsLoading, setCloudProductsLoading] = useState(true);
@@ -241,6 +246,7 @@ function AppContent() {
   const [localUser, setLocalUser] = useState<AppUser | null>(null);
   const [localProfile, setLocalProfile] = useState<UserProfile | null>(null);
   const [localIsAdmin, setLocalIsAdmin] = useState(false);
+  const [localCategories, setLocalCategories] = useState<CategoryDefinition[]>([]);
   const [localProducts, setLocalProducts] = useState<Product[]>([]);
   const [localProductsLoading, setLocalProductsLoading] = useState(true);
   const [localOrders, setLocalOrders] = useState<Order[]>([]);
@@ -365,6 +371,7 @@ function AppContent() {
         (a, b) => getMillis(b.createdAt) - getMillis(a.createdAt),
       );
 
+      setLocalCategories(Array.isArray(payload.categories) ? payload.categories : []);
       setLocalProducts(payload.products);
       setLocalProductsLoading(false);
       setLocalOrders(sortedOrders);
@@ -908,6 +915,55 @@ function AppContent() {
     };
   }, [dbMode, cloudAuthReady, cloudIsAdmin, cloudUser]);
 
+  // 4g. Real-time Categories (Rubros) Listener (Cloud Mode)
+  useEffect(() => {
+    if (dbMode !== 'cloud' || !cloudAuthReady) {
+      setCloudCategories([]);
+      return;
+    }
+
+    const isBootstrappedAdminAccount =
+      cloudIsAdmin &&
+      Boolean(cloudUser?.emailVerified) &&
+      cloudUser?.email?.toLowerCase() === 'informaticaurquiza@gmail.com';
+
+    const categoriesQuery = isBootstrappedAdminAccount
+      ? query(collection(db, 'categories'))
+      : query(collection(db, 'categories'), where('active', '==', true));
+
+    const unsubscribe = onSnapshot(
+      categoriesQuery,
+      (snapshot) => {
+        if (snapshot.empty) {
+          setCloudCategories([]);
+          if (isBootstrappedAdminAccount && !seededCategoriesRef.current) {
+            seededCategoriesRef.current = true;
+            void seedDefaultCategoriesIfEmpty().catch(() => {
+              seededCategoriesRef.current = false;
+            });
+          }
+          return;
+        }
+        const list = snapshot.docs
+          .map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<CategoryDefinition, 'id'>),
+          }))
+          .sort((a, b) => {
+            const orderDiff = (a.sortOrder ?? 999) - (b.sortOrder ?? 999);
+            if (orderDiff !== 0) return orderDiff;
+            return a.label.localeCompare(b.label, 'es');
+          });
+        setCloudCategories(list);
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'categories');
+      },
+    );
+
+    return () => unsubscribe();
+  }, [dbMode, cloudAuthReady, cloudIsAdmin, cloudUser]);
+
   const cloudAllBenefits = useMemo(() => {
     if (cloudIsAdmin) return cloudAdminBenefits;
     const merged = [...cloudOwnedBenefits, ...cloudPersonalBenefits, ...cloudGlobalBenefits];
@@ -961,6 +1017,31 @@ function AppContent() {
   const activeNotifications = dbMode === 'local' ? localNotifications : cloudAllNotifications;
   const activeShippingSettings =
     dbMode === 'local' ? localShippingSettings : cloudShippingSettings;
+
+  const activeCategories = useMemo(() => {
+    const raw = dbMode === 'local' ? localCategories : cloudCategories;
+    const source = raw.length > 0 ? raw : CATEGORIES;
+    return [...source].sort((a, b) => {
+      const orderDiff = (a.sortOrder ?? 999) - (b.sortOrder ?? 999);
+      if (orderDiff !== 0) return orderDiff;
+      return a.label.localeCompare(b.label, 'es');
+    });
+  }, [dbMode, localCategories, cloudCategories]);
+
+  const catalogCategories = useMemo(
+    () => activeCategories.filter((c) => c.active !== false),
+    [activeCategories],
+  );
+
+  useEffect(() => {
+    if (
+      selectedCategory !== 'all' &&
+      catalogCategories.length > 0 &&
+      !catalogCategories.some((c) => c.id === selectedCategory)
+    ) {
+      setSelectedCategory('all');
+    }
+  }, [selectedCategory, catalogCategories]);
 
   // Storefront catalog hides paused products and products of expired/inactive sellers
   const storefrontProducts = useMemo(() => {
@@ -1434,6 +1515,7 @@ function AppContent() {
       <main className="flex-1">
         {activeView === 'catalog' && (
           <StorefrontView
+            categories={catalogCategories}
             products={storefrontProducts}
             loading={activeProductsLoading}
             shippingSettings={activeShippingSettings}
@@ -1501,6 +1583,7 @@ function AppContent() {
             localServerInfo={localServerInfo}
             onRefreshServerInfo={refreshLocalServerInfo}
             onRefreshLocalData={dbMode === 'local' ? loadLocalData : undefined}
+            categories={activeCategories}
             products={activeProducts}
             orders={activeOrders}
             accounts={activeAccounts}
