@@ -72,12 +72,15 @@ export const CATEGORY_MAP: Record<string, CategoryDefinition> = CATEGORIES.reduc
   {} as Record<string, CategoryDefinition>,
 );
 
+export type ProductCondition = 'nuevo' | 'usado';
+
 export interface Product {
   id: string;
   sku: string;
   name: string;
   category: CategoryId;
   categoryLabel: string;
+  condition?: ProductCondition;
   description: string;
   price: number;
   compareAtPrice?: number;

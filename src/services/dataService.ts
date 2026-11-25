@@ -20,6 +20,7 @@ import type {
   PaymentMethod,
   PaymentReceipt,
   Product,
+  ProductCondition,
   ShipmentStatus,
   SubscriptionPayment,
   SubscriptionPaymentMethod,
@@ -174,6 +175,7 @@ export async function createOrUpdateProduct(productInput: {
   name: string;
   category: CategoryId;
   categoryLabel?: string;
+  condition?: ProductCondition;
   description: string;
   price: number;
   compareAtPrice?: number;

@@ -28,6 +28,11 @@
           "minLength": 2,
           "maxLength": 48
         },
+        "condition": {
+          "type": "string",
+          "enum": ["nuevo", "usado"],
+          "description": "Article condition selected during product creation or editing (nuevo or usado)."
+        },
         "description": {
           "type": "string",
           "minLength": 5,

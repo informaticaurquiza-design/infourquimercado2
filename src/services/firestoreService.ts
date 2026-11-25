@@ -67,6 +67,7 @@ import type {
   PaymentReceipt,
   PaymentStatus,
   Product,
+  ProductCondition,
   RestoreMode,
   RestoreSummary,
   ShipmentStatus,
@@ -501,6 +502,7 @@ export async function createOrUpdateProduct(
     name: string;
     category: CategoryId;
     categoryLabel?: string;
+    condition?: ProductCondition;
     description: string;
     price: number;
     compareAtPrice?: number;
@@ -569,11 +571,15 @@ export async function createOrUpdateProduct(
     }
   }
 
+  const resolvedCondition: ProductCondition =
+    productInput.condition === 'usado' ? 'usado' : 'nuevo';
+
   const commonFields: Record<string, unknown> = {
     sku: clampString(productInput.sku.toUpperCase(), 32),
     name: clampString(productInput.name, 120),
     category: normalizedCategory,
     categoryLabel: resolvedCategoryLabel,
+    condition: resolvedCondition,
     description: clampString(productInput.description, 800),
     price: Math.round(productInput.price),
     stock: Math.round(productInput.stock),
@@ -1450,6 +1456,7 @@ export async function restoreCloudDatabaseBackup(
           name,
           category: cat,
           categoryLabel: restoredCategoryLabel,
+          condition: item.condition === 'usado' ? 'usado' : 'nuevo',
           description,
           price,
           stock: Math.max(0, Math.min(100000, Math.round(Number(item.stock) || 0))),

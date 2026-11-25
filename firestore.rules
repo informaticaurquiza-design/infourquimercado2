@@ -76,7 +76,7 @@ service cloud.firestore {
         'specs', 'featured', 'active', 'createdAt', 'updatedAt'
       ])
       && data.keys().hasOnly([
-        'sku', 'name', 'category', 'categoryLabel', 'description',
+        'sku', 'name', 'category', 'categoryLabel', 'condition', 'description',
         'price', 'compareAtPrice', 'stock', 'minStockThreshold', 'soldCount',
         'imageUrl', 'images', 'specs', 'featured', 'freeShipping',
         'benefitId', 'benefitEnabled', 'active',
@@ -87,6 +87,7 @@ service cloud.firestore {
       && data.name is string && data.name.size() >= 2 && data.name.size() <= 120
       && data.category is string && data.category.size() >= 2 && data.category.size() <= 40 && data.category.matches('^[a-z0-9][a-z0-9_\\-]{1,39}$')
       && data.categoryLabel is string && data.categoryLabel.size() >= 2 && data.categoryLabel.size() <= 48
+      && (!('condition' in data) || (data.condition is string && data.condition in ['nuevo', 'usado']))
       && data.description is string && data.description.size() >= 5 && data.description.size() <= 800
       && data.price is number && data.price > 0 && data.price <= 100000000
       && (!('compareAtPrice' in data) || (data.compareAtPrice is number && data.compareAtPrice >= 0 && data.compareAtPrice <= 100000000))

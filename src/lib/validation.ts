@@ -4,6 +4,7 @@ import type {
   CustomerBenefit,
   DeliveryVehicleType,
   Product,
+  ProductCondition,
   ShipmentStatus,
   UserProfile,
 } from '../types/ecommerce';
@@ -172,10 +173,15 @@ export function validateCategoryInput(input: {
   return null;
 }
 
+export function getProductConditionLabel(condition?: ProductCondition): string {
+  return condition === 'usado' ? 'Usado' : 'Nuevo';
+}
+
 export function validateProductInput(input: {
   sku: string;
   name: string;
   category: CategoryId;
+  condition?: ProductCondition;
   description: string;
   price: number;
   stock: number;
@@ -190,6 +196,9 @@ export function validateProductInput(input: {
   }
   if (!CATEGORY_SLUG_PATTERN.test(String(input.category || '').trim())) {
     return 'Seleccioná un rubro válido para el producto.';
+  }
+  if (input.condition !== undefined && input.condition !== 'nuevo' && input.condition !== 'usado') {
+    return 'Seleccioná si el artículo es Nuevo o Usado.';
   }
   if (input.description.trim().length < 5 || input.description.trim().length > 800) {
     return 'La descripción debe tener entre 5 y 800 caracteres.';

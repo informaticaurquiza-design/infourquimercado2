@@ -25,6 +25,7 @@ import {
   formatExpirationDate,
   getBenefitTypeLabel,
   getProductActiveBenefit,
+  getProductConditionLabel,
 } from '../lib/validation';
 import {
   CATEGORIES,
@@ -349,6 +350,7 @@ export function StorefrontView({
           p.name.toLowerCase().includes(q) ||
           p.sku.toLowerCase().includes(q) ||
           p.categoryLabel.toLowerCase().includes(q) ||
+          getProductConditionLabel(p.condition).toLowerCase().includes(q) ||
           p.description.toLowerCase().includes(q);
         if (!match) return false;
       }
@@ -867,6 +869,16 @@ export function StorefrontView({
                         <div className="flex items-center justify-between gap-2 text-xs text-zinc-500 mb-1.5">
                           <span className="truncate">
                             {product.categoryLabel}
+                            {' · '}
+                            <span
+                              className={`font-medium ${
+                                product.condition === 'usado'
+                                  ? 'text-amber-700'
+                                  : 'text-zinc-700'
+                              }`}
+                            >
+                              {getProductConditionLabel(product.condition)}
+                            </span>
                             {qualifiesForFreeShipping(product) && (
                               <span className="text-emerald-700 font-medium"> · Envío gratis</span>
                             )}
@@ -1025,6 +1037,16 @@ export function StorefrontView({
             <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200">
               <div className="text-xs text-zinc-500">
                 <span>{liveSelectedProduct.categoryLabel}</span>
+                <span className="mx-2">·</span>
+                <span
+                  className={`font-semibold ${
+                    liveSelectedProduct.condition === 'usado'
+                      ? 'text-amber-700'
+                      : 'text-zinc-800'
+                  }`}
+                >
+                  {getProductConditionLabel(liveSelectedProduct.condition)}
+                </span>
                 <span className="mx-2">·</span>
                 <span className="font-mono">{liveSelectedProduct.sku}</span>
               </div>

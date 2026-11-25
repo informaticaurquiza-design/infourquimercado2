@@ -50,6 +50,7 @@ import {
   getAccountSubscriptionInfo,
   getBenefitTypeLabel,
   getNextShipmentStatus,
+  getProductConditionLabel,
   getShipmentStatusMeta,
   isBenefitExpired,
 } from '../lib/validation';
@@ -73,6 +74,7 @@ import {
   type NotificationType,
   type Order,
   type Product,
+  type ProductCondition,
   type ShipmentStatus,
   type StoreSettings,
   type SubscriptionPayment,
@@ -210,6 +212,7 @@ export function AdminDashboardView({
   const [formSku, setFormSku] = useState('');
   const [formName, setFormName] = useState('');
   const [formCategory, setFormCategory] = useState<CategoryId>('tecnologia');
+  const [formCondition, setFormCondition] = useState<ProductCondition>('nuevo');
   const [formDescription, setFormDescription] = useState('');
   const [formPrice, setFormPrice] = useState('');
   const [formComparePrice, setFormComparePrice] = useState('');
@@ -414,7 +417,8 @@ export function AdminDashboardView({
         return (
           p.name.toLowerCase().includes(q) ||
           p.sku.toLowerCase().includes(q) ||
-          p.categoryLabel.toLowerCase().includes(q)
+          p.categoryLabel.toLowerCase().includes(q) ||
+          getProductConditionLabel(p.condition).toLowerCase().includes(q)
         );
       }
       return true;
@@ -453,16 +457,18 @@ export function AdminDashboardView({
         ? `Stock disponible (${product.stock} u.)`
         : 'Consultar disponibilidad';
 
+    const conditionLabel = getProductConditionLabel(product.condition);
     const whatsappLines = [
       `*${product.name}*`,
       priceLine,
-      `${product.categoryLabel} · SKU ${product.sku}`,
+      `${product.categoryLabel} · ${conditionLabel} · SKU ${product.sku}`,
       stockLine,
       ...(shortDesc ? [shortDesc] : []),
       ...(productUrl ? ['', `Ver en Infourqui Mercado: ${productUrl}`] : []),
     ];
     const facebookQuote = [
       product.name,
+      conditionLabel,
       priceLine,
       shortDesc || `${product.categoryLabel} · SKU ${product.sku}`,
       'Disponible en Infourqui Mercado',
@@ -524,6 +530,7 @@ export function AdminDashboardView({
     setFormSku(`ALB-NEW-${Math.floor(100 + Math.random() * 900)}`);
     setFormName('');
     setFormCategory(defaultCategoryId);
+    setFormCondition('nuevo');
     setFormDescription('');
     setFormPrice('');
     setFormComparePrice('');
@@ -609,6 +616,7 @@ export function AdminDashboardView({
     setFormSku(product.sku);
     setFormName(product.name);
     setFormCategory(product.category);
+    setFormCondition(product.condition === 'usado' ? 'usado' : 'nuevo');
     setFormDescription(product.description);
     setFormPrice(String(product.price));
     setFormComparePrice(product.compareAtPrice ? String(product.compareAtPrice) : '');
@@ -677,6 +685,7 @@ export function AdminDashboardView({
         name: formName,
         category: formCategory,
         categoryLabel: selectedCategoryMeta?.label || existingEditingProduct?.categoryLabel,
+        condition: formCondition,
         description: formDescription,
         price: priceNum,
         compareAtPrice: compareNum,
@@ -1324,6 +1333,16 @@ export function AdminDashboardView({
                             <div className="min-w-0">
                               <p className="font-medium text-zinc-950 truncate">{product.name}</p>
                               <p className="text-[11px] text-zinc-500 mt-0.5 truncate">
+                                <span
+                                  className={`font-medium ${
+                                    product.condition === 'usado'
+                                      ? 'text-amber-700'
+                                      : 'text-zinc-700'
+                                  }`}
+                                >
+                                  {getProductConditionLabel(product.condition)}
+                                </span>
+                                {' · '}
                                 {photoCount} {photoCount === 1 ? 'foto' : 'fotos'}
                                 {product.freeShipping && (
                                   <span className="font-medium text-emerald-700">
@@ -2019,18 +2038,57 @@ export function AdminDashboardView({
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-zinc-700 mb-1">
-                  Nombre del producto
-                </label>
-                <input
-                  type="text"
-                  required
-                  maxLength={120}
-                  value={formName}
-                  onChange={(e) => setFormName(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-end">
+                <div className="sm:col-span-8">
+                  <label className="block text-xs font-medium text-zinc-700 mb-1">
+                    Nombre del producto
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={120}
+                    value={formName}
+                    onChange={(e) => setFormName(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                  />
+                </div>
+                <div className="sm:col-span-4">
+                  <label className="block text-xs font-medium text-zinc-700 mb-1">
+                    Condición del artículo
+                  </label>
+                  <div
+                    role="radiogroup"
+                    aria-label="Condición del artículo"
+                    className="grid grid-cols-2 gap-1.5 p-1 bg-zinc-100 border border-zinc-200 rounded-lg"
+                  >
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={formCondition === 'nuevo'}
+                      onClick={() => setFormCondition('nuevo')}
+                      className={`py-1.5 px-2.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                        formCondition === 'nuevo'
+                          ? 'bg-white text-zinc-950 shadow-sm'
+                          : 'text-zinc-600 hover:text-zinc-950'
+                      }`}
+                    >
+                      Nuevo
+                    </button>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={formCondition === 'usado'}
+                      onClick={() => setFormCondition('usado')}
+                      className={`py-1.5 px-2.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                        formCondition === 'usado'
+                          ? 'bg-amber-600 text-white shadow-sm'
+                          : 'text-zinc-600 hover:text-zinc-950'
+                      }`}
+                    >
+                      Usado
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <div>
