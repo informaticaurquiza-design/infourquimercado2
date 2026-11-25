@@ -344,6 +344,21 @@ export interface AdminBillingSettings {
   updatedAt?: Timestamp | string;
 }
 
+export interface ShippingRate {
+  id: string;
+  ownerId: string;
+  ownerName: string;
+  name: string;
+  zone: string;
+  cost: number;
+  freeOverAmount: number;
+  estimatedDays: string;
+  description: string;
+  active: boolean;
+  createdAt?: Timestamp | string;
+  updatedAt?: Timestamp | string;
+}
+
 export interface AppUser {
   uid: string;
   email: string | null;

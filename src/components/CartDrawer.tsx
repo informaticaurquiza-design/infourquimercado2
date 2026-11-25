@@ -1,7 +1,18 @@
 import { useEffect, useState } from 'react';
 import { ArrowRight, Minus, Plus, ShoppingBag, Trash2, X } from 'lucide-react';
-import { evaluateOrderBenefits, formatCurrency } from '../lib/validation';
-import type { AppUser, CartItem, CustomerBenefit, StoreSettings } from '../types/ecommerce';
+import {
+  calculateShippingRateCost,
+  evaluateOrderBenefits,
+  formatCurrency,
+  resolveApplicableShippingRates,
+} from '../lib/validation';
+import type {
+  AppUser,
+  CartItem,
+  CustomerBenefit,
+  ShippingRate,
+  StoreSettings,
+} from '../types/ecommerce';
 import { ProductImage } from './ProductImage';
 
 interface CartDrawerProps {
@@ -9,6 +20,7 @@ interface CartDrawerProps {
   onClose: () => void;
   items: CartItem[];
   shippingSettings: StoreSettings;
+  shippingRates: ShippingRate[];
   benefits: CustomerBenefit[];
   user: AppUser | null;
   promoCode: string;
@@ -23,6 +35,7 @@ export function CartDrawer({
   onClose,
   items,
   shippingSettings,
+  shippingRates,
   benefits,
   user,
   onUpdateQuantity,
@@ -58,17 +71,47 @@ export function CartDrawer({
   const discount = benefitEval.combinedBenefitDiscount;
   const netSubtotal = Math.max(0, subtotal - discount);
   const hasFreeShippingProduct = items.some((item) => item.freeShipping);
+
+  const applicableRates = resolveApplicableShippingRates(items, shippingRates);
+  const bestCustomRate =
+    applicableRates.length > 0
+      ? applicableRates.reduce((best, candidate) => {
+          const bestCost = calculateShippingRateCost(best, netSubtotal, hasFreeShippingProduct);
+          const candCost = calculateShippingRateCost(candidate, netSubtotal, hasFreeShippingProduct);
+          return candCost < bestCost ? candidate : best;
+        }, applicableRates[0])
+      : null;
+
   const shippingCost =
-    items.length === 0 || hasFreeShippingProduct || threshold === 0 || netSubtotal >= threshold
+    items.length === 0
       ? 0
-      : baseShippingCost;
+      : bestCustomRate
+        ? calculateShippingRateCost(bestCustomRate, netSubtotal, hasFreeShippingProduct)
+        : hasFreeShippingProduct || threshold === 0 || netSubtotal >= threshold
+          ? 0
+          : baseShippingCost;
+
+  const effectiveThreshold = bestCustomRate
+    ? bestCustomRate.cost === 0
+      ? 0
+      : bestCustomRate.freeOverAmount > 0
+        ? bestCustomRate.freeOverAmount
+        : null
+    : threshold;
+
   const total = Math.max(0, netSubtotal + shippingCost);
   const remainingForFreeShipping =
-    hasFreeShippingProduct || threshold === 0 ? 0 : Math.max(0, threshold - netSubtotal);
+    hasFreeShippingProduct || effectiveThreshold === 0 || shippingCost === 0
+      ? 0
+      : effectiveThreshold !== null
+        ? Math.max(0, effectiveThreshold - netSubtotal)
+        : null;
   const freeShippingProgress =
-    hasFreeShippingProduct || threshold === 0
+    hasFreeShippingProduct || effectiveThreshold === 0 || shippingCost === 0
       ? 100
-      : Math.min(100, Math.round((netSubtotal / threshold) * 100));
+      : effectiveThreshold !== null && effectiveThreshold > 0
+        ? Math.min(100, Math.round((netSubtotal / effectiveThreshold) * 100))
+        : 0;
 
   const suggestedPromoCode =
     benefitEval.promoBenefits[0]?.promoCode ||
@@ -135,7 +178,7 @@ export function CartDrawer({
         </div>
 
         {/* Free shipping indicator */}
-        {items.length > 0 && (
+        {items.length > 0 && remainingForFreeShipping !== null && (
           <div className="px-6 py-3 bg-zinc-50 border-b border-zinc-200 space-y-2">
             <div>
               <div className="flex justify-between text-xs mb-1.5">
@@ -314,7 +357,13 @@ export function CartDrawer({
                 </div>
               )}
               <div className="flex justify-between text-zinc-600">
-                <span>Envío estándar</span>
+                <span>
+                  {bestCustomRate
+                    ? applicableRates.length > 1
+                      ? `Envío (desde ${bestCustomRate.name})`
+                      : `Envío · ${bestCustomRate.name}`
+                    : 'Envío estándar'}
+                </span>
                 <span className="font-mono tabular-nums">
                   {shippingCost === 0 ? 'Sin cargo' : formatCurrency(shippingCost)}
                 </span>

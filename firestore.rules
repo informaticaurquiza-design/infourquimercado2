@@ -383,6 +383,30 @@ service cloud.firestore {
       && data.updatedAt is timestamp;
     }
 
+    function isValidShippingRate(data) {
+      return data.keys().hasAll([
+        'ownerId', 'ownerName', 'name', 'zone', 'cost',
+        'freeOverAmount', 'estimatedDays', 'description',
+        'active', 'createdAt', 'updatedAt'
+      ])
+      && data.keys().hasOnly([
+        'ownerId', 'ownerName', 'name', 'zone', 'cost',
+        'freeOverAmount', 'estimatedDays', 'description',
+        'active', 'createdAt', 'updatedAt'
+      ])
+      && isValidId(data.ownerId)
+      && data.ownerName is string && data.ownerName.size() >= 1 && data.ownerName.size() <= 120
+      && data.name is string && data.name.size() >= 2 && data.name.size() <= 80
+      && data.zone is string && data.zone.size() >= 2 && data.zone.size() <= 80
+      && data.cost is number && data.cost >= 0 && data.cost <= 10000000
+      && data.freeOverAmount is number && data.freeOverAmount >= 0 && data.freeOverAmount <= 100000000
+      && data.estimatedDays is string && data.estimatedDays.size() >= 2 && data.estimatedDays.size() <= 40
+      && data.description is string && data.description.size() <= 200
+      && data.active is bool
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
     // --- Collection: products ---
     match /products/{productId} {
       allow get: if isValidId(productId) && (
@@ -752,6 +776,40 @@ service cloud.firestore {
       allow delete: if isValidId(categoryId)
         && isVerifiedUser()
         && isAdmin();
+    }
+
+    // --- Collection: shippingRates (Per-Client / Seller Custom Shipping Tariffs) ---
+    match /shippingRates/{rateId} {
+      allow get: if isValidId(rateId) && (
+        existing().active == true
+        || (isSignedIn() && existing().ownerId == request.auth.uid)
+        || isAdmin()
+      );
+      allow list: if existing().active == true
+        || (isSignedIn() && existing().ownerId == request.auth.uid)
+        || isBootstrappedAdmin();
+      allow create: if isValidId(rateId)
+        && isVerifiedUser()
+        && isValidShippingRate(incoming())
+        && incoming().ownerId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(rateId)
+        && isVerifiedUser()
+        && isValidShippingRate(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().ownerId == existing().ownerId
+        && incoming().updatedAt == request.time
+        && (
+          existing().ownerId == request.auth.uid
+          || isAdmin()
+        );
+      allow delete: if isValidId(rateId)
+        && isVerifiedUser()
+        && (
+          existing().ownerId == request.auth.uid
+          || isAdmin()
+        );
     }
   }
 }

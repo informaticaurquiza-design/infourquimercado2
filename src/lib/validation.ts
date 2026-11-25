@@ -1,11 +1,13 @@
 import type {
   BenefitType,
+  CartItem,
   CategoryId,
   CustomerBenefit,
   DeliveryVehicleType,
   Product,
   ProductCondition,
   ShipmentStatus,
+  ShippingRate,
   UserProfile,
 } from '../types/ecommerce';
 
@@ -834,4 +836,98 @@ export function getAccountSubscriptionInfo(
     monthlyAmount,
     tierLabel,
   };
+}
+
+export interface ShippingRateInput {
+  name: string;
+  zone: string;
+  cost: number;
+  freeOverAmount: number;
+  estimatedDays: string;
+  description: string;
+  active: boolean;
+}
+
+export function validateShippingRateInput(input: ShippingRateInput): {
+  valid: boolean;
+  error?: string;
+  sanitized?: ShippingRateInput;
+} {
+  const name = clampString(input.name || '', 80);
+  const zone = clampString(input.zone || '', 80);
+  const estimatedDays = clampString(input.estimatedDays || '', 40);
+  const description = clampString(input.description || '', 200);
+  const cost = Math.round(Number(input.cost));
+  const freeOverAmount = Math.round(Number(input.freeOverAmount || 0));
+
+  if (name.length < 2) {
+    return { valid: false, error: 'El nombre de la tarifa debe tener al menos 2 caracteres.' };
+  }
+  if (zone.length < 2) {
+    return { valid: false, error: 'Indicá la zona o cobertura de envío (mínimo 2 caracteres).' };
+  }
+  if (!Number.isFinite(cost) || cost < 0 || cost > 10000000) {
+    return { valid: false, error: 'El costo de envío debe estar entre $ 0 y $ 10.000.000.' };
+  }
+  if (!Number.isFinite(freeOverAmount) || freeOverAmount < 0 || freeOverAmount > 100000000) {
+    return {
+      valid: false,
+      error: 'El monto mínimo para envío gratis debe estar entre $ 0 y $ 100.000.000.',
+    };
+  }
+  if (estimatedDays.length < 2) {
+    return {
+      valid: false,
+      error: 'Indicá el tiempo estimado de entrega (ej. "24 a 48 hs").',
+    };
+  }
+
+  return {
+    valid: true,
+    sanitized: {
+      name,
+      zone,
+      cost,
+      freeOverAmount,
+      estimatedDays,
+      description,
+      active: Boolean(input.active),
+    },
+  };
+}
+
+export function resolveApplicableShippingRates(
+  items: Pick<CartItem, 'sellerId'>[],
+  shippingRates: ShippingRate[],
+): ShippingRate[] {
+  if (items.length === 0 || shippingRates.length === 0) return [];
+  const activeRates = shippingRates.filter((r) => r.active);
+  if (activeRates.length === 0) return [];
+
+  const sellerIds = Array.from(
+    new Set(
+      items
+        .map((item) => (typeof item.sellerId === 'string' ? item.sellerId.trim() : ''))
+        .filter((id) => id.length > 0),
+    ),
+  );
+
+  if (sellerIds.length === 0) return [];
+
+  return activeRates
+    .filter((rate) => sellerIds.includes(rate.ownerId))
+    .sort((a, b) => a.cost - b.cost || a.name.localeCompare(b.name, 'es'));
+}
+
+export function calculateShippingRateCost(
+  rate: Pick<ShippingRate, 'cost' | 'freeOverAmount'>,
+  netSubtotal: number,
+  hasFreeShippingProduct: boolean,
+): number {
+  if (hasFreeShippingProduct) return 0;
+  const baseCost = Math.max(0, Math.round(rate.cost));
+  if (baseCost === 0) return 0;
+  const freeOver = Math.max(0, Math.round(rate.freeOverAmount || 0));
+  if (freeOver > 0 && netSubtotal >= freeOver) return 0;
+  return baseCost;
 }

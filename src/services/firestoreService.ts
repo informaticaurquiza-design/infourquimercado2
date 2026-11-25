@@ -49,6 +49,7 @@ import {
   validateCategoryInput,
   validateDeliveryAgentInput,
   validateProductInput,
+  validateShippingRateInput,
 } from '../lib/validation';
 import type {
   AppNotification,
@@ -73,6 +74,7 @@ import type {
   RestoreMode,
   RestoreSummary,
   ShipmentStatus,
+  ShippingRate,
   StoreSettings,
   SubscriptionPayment,
   SubscriptionPaymentMethod,
@@ -262,6 +264,8 @@ export interface CheckoutOrderInput {
   shippingPostalCode: string;
   shippingNotes: string;
   deliveryMethod?: DeliveryMethod;
+  shippingCarrier?: string;
+  estimatedDelivery?: string;
   subtotal: number;
   discount: number;
   shippingCost: number;
@@ -393,8 +397,18 @@ export async function createOrderWithInventoryUpdate(input: CheckoutOrderInput):
     paymentStatus,
     ...(cleanReceipt ? { paymentReceipt: cleanReceipt } : {}),
     shipmentStatus: 'confirmed' as ShipmentStatus,
-    carrier: isPickup ? 'Retiro en domicilio' : 'Infourqui Express Logística',
-    estimatedDelivery: isPickup ? 'A coordinar por contacto' : '3 a 5 días hábiles',
+    carrier: isPickup
+      ? 'Retiro en domicilio'
+      : (() => {
+          const custom = clampString(input.shippingCarrier || '', 60);
+          return custom.length >= 2 ? custom : 'Infourqui Express Logística';
+        })(),
+    estimatedDelivery: isPickup
+      ? 'A coordinar por contacto'
+      : (() => {
+          const custom = clampString(input.estimatedDelivery || '', 40);
+          return custom.length >= 2 ? custom : '3 a 5 días hábiles';
+        })(),
     currentLocation: isPickup
       ? 'Listo para coordinar retiro en domicilio'
       : 'Depósito Central — Reserva confirmada',
@@ -1279,6 +1293,105 @@ export async function saveAdminBillingSettings(
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, settingsPath);
+  }
+}
+
+export async function createOrUpdateShippingRate(input: {
+  id?: string;
+  ownerName?: string;
+  name: string;
+  zone: string;
+  cost: number;
+  freeOverAmount: number;
+  estimatedDays: string;
+  description: string;
+  active: boolean;
+}): Promise<ShippingRate> {
+  const currentUser = auth.currentUser;
+  if (!currentUser || !currentUser.emailVerified) {
+    throw new Error('Iniciá sesión con una cuenta verificada para gestionar tarifas de envío.');
+  }
+
+  const check = validateShippingRateInput({
+    name: input.name,
+    zone: input.zone,
+    cost: input.cost,
+    freeOverAmount: input.freeOverAmount,
+    estimatedDays: input.estimatedDays,
+    description: input.description,
+    active: input.active,
+  });
+
+  if (!check.valid || !check.sanitized) {
+    throw new Error(check.error || 'Revisá los datos de la tarifa de envío.');
+  }
+
+  const clean = check.sanitized;
+  const nowIso = new Date().toISOString();
+  const isEditing = Boolean(input.id && ID_PATTERN.test(input.id));
+  const rateId = isEditing ? (input.id as string) : safeId('shp');
+  const path = `shippingRates/${rateId}`;
+  const rawOwnerName = clampString(
+    input.ownerName || currentUser.displayName || currentUser.email || 'Vendedor',
+    120,
+  );
+  const ownerName = rawOwnerName.length >= 1 ? rawOwnerName : 'Vendedor';
+
+  try {
+    if (isEditing) {
+      const ref = doc(db, 'shippingRates', rateId);
+      await updateDoc(ref, {
+        name: clean.name,
+        zone: clean.zone,
+        cost: clean.cost,
+        freeOverAmount: clean.freeOverAmount,
+        estimatedDays: clean.estimatedDays,
+        description: clean.description,
+        active: clean.active,
+        updatedAt: serverTimestamp(),
+      });
+      return {
+        id: rateId,
+        ownerId: currentUser.uid,
+        ownerName,
+        ...clean,
+        updatedAt: nowIso,
+      };
+    }
+
+    await setDoc(doc(db, 'shippingRates', rateId), {
+      ownerId: currentUser.uid,
+      ownerName,
+      name: clean.name,
+      zone: clean.zone,
+      cost: clean.cost,
+      freeOverAmount: clean.freeOverAmount,
+      estimatedDays: clean.estimatedDays,
+      description: clean.description,
+      active: clean.active,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    return {
+      id: rateId,
+      ownerId: currentUser.uid,
+      ownerName,
+      ...clean,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+  } catch (error) {
+    handleFirestoreError(error, isEditing ? OperationType.UPDATE : OperationType.CREATE, path);
+  }
+}
+
+export async function deleteShippingRateById(rateId: string): Promise<void> {
+  const path = `shippingRates/${rateId}`;
+  try {
+    await deleteDoc(doc(db, 'shippingRates', rateId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
 

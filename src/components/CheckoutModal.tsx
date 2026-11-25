@@ -19,7 +19,12 @@ import {
 } from 'lucide-react';
 import { compressReceiptImage } from '../lib/imageTools';
 import { sendBrowserPush } from '../lib/pushNotifications';
-import { evaluateOrderBenefits, formatCurrency } from '../lib/validation';
+import {
+  calculateShippingRateCost,
+  evaluateOrderBenefits,
+  formatCurrency,
+  resolveApplicableShippingRates,
+} from '../lib/validation';
 import {
   createOrderWithInventoryUpdate,
   parseTransferReceipt,
@@ -33,6 +38,7 @@ import type {
   Order,
   PaymentMethod,
   PaymentReceipt,
+  ShippingRate,
   StoreSettings,
   UserProfile,
 } from '../types/ecommerce';
@@ -42,6 +48,7 @@ interface CheckoutModalProps {
   onClose: () => void;
   items: CartItem[];
   shippingSettings: StoreSettings;
+  shippingRates: ShippingRate[];
   benefits: CustomerBenefit[];
   promoCode: string;
   user: AppUser | null;
@@ -57,6 +64,7 @@ export function CheckoutModal({
   onClose,
   items,
   shippingSettings,
+  shippingRates,
   benefits,
   promoCode,
   user,
@@ -67,6 +75,7 @@ export function CheckoutModal({
 }: CheckoutModalProps) {
   const [step, setStep] = useState<'shipping' | 'payment' | 'processing' | 'receipt'>('shipping');
   const [deliveryMethod, setDeliveryMethod] = useState<DeliveryMethod>('delivery');
+  const [selectedShippingRateId, setSelectedShippingRateId] = useState<string>('');
   const [customerName, setCustomerName] = useState('');
   const [shippingPhone, setShippingPhone] = useState('');
   const [shippingAddress, setShippingAddress] = useState('');
@@ -134,6 +143,21 @@ export function CheckoutModal({
     }
   }, [open, profile, user]);
 
+  const applicableRates = resolveApplicableShippingRates(items, shippingRates);
+  const selectedRate =
+    applicableRates.find((r) => r.id === selectedShippingRateId) || applicableRates[0] || null;
+
+  useEffect(() => {
+    if (!open) return;
+    if (applicableRates.length === 0) {
+      if (selectedShippingRateId !== '') setSelectedShippingRateId('');
+      return;
+    }
+    if (!applicableRates.some((r) => r.id === selectedShippingRateId)) {
+      setSelectedShippingRateId(applicableRates[0].id);
+    }
+  }, [open, applicableRates, selectedShippingRateId]);
+
   if (!open) return null;
 
   const threshold = Math.max(0, shippingSettings.freeShippingThreshold);
@@ -152,9 +176,11 @@ export function CheckoutModal({
   const transferDiscount =
     paymentMethod === 'transfer' ? Math.round(Math.max(0, subtotal - benefitDiscount) * 0.05) : 0;
   const totalDiscount = Math.min(subtotal, benefitDiscount + transferDiscount);
+  const netSubtotal = Math.max(0, subtotal - totalDiscount);
   const hasFreeShippingProduct = items.some((item) => item.freeShipping);
-  const standardDeliveryCost =
-    hasFreeShippingProduct || threshold === 0 || subtotal - totalDiscount >= threshold
+  const standardDeliveryCost = selectedRate
+    ? calculateShippingRateCost(selectedRate, netSubtotal, hasFreeShippingProduct)
+    : hasFreeShippingProduct || threshold === 0 || netSubtotal >= threshold
       ? 0
       : baseShippingCost;
   const isPickup = deliveryMethod === 'pickup';
@@ -377,6 +403,11 @@ export function CheckoutModal({
         shippingPostalCode: isPickup ? 'RET' : shippingPostalCode,
         shippingNotes: finalNotes,
         deliveryMethod,
+        shippingCarrier:
+          !isPickup && selectedRate
+            ? `${selectedRate.name} (${selectedRate.zone})`.slice(0, 60)
+            : undefined,
+        estimatedDelivery: !isPickup && selectedRate ? selectedRate.estimatedDays : undefined,
         subtotal,
         discount: totalDiscount,
         shippingCost,
@@ -759,6 +790,65 @@ export function CheckoutModal({
                       </button>
                     </div>
                   </div>
+
+                  {!isPickup && applicableRates.length > 0 && (
+                    <div className="space-y-2">
+                      <label className="block text-xs font-medium text-zinc-700">
+                        Elegí la tarifa de envío disponible
+                      </label>
+                      <div className="space-y-2">
+                        {applicableRates.map((rate) => {
+                          const rateSelected = selectedRate?.id === rate.id;
+                          const ratePrice = calculateShippingRateCost(
+                            rate,
+                            netSubtotal,
+                            hasFreeShippingProduct,
+                          );
+                          return (
+                            <button
+                              key={rate.id}
+                              type="button"
+                              onClick={() => setSelectedShippingRateId(rate.id)}
+                              className={`w-full text-left p-3 rounded-xl border transition-all cursor-pointer ${
+                                rateSelected
+                                  ? 'border-blue-700 bg-blue-50/50 ring-1 ring-blue-700'
+                                  : 'border-zinc-200 bg-white hover:border-zinc-400'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <p className="text-xs font-semibold text-zinc-950">
+                                    {rate.name}
+                                    <span className="font-normal text-zinc-500">
+                                      {' '}
+                                      · {rate.zone}
+                                    </span>
+                                  </p>
+                                  <p className="text-[11px] text-zinc-500 mt-0.5">
+                                    Plazo estimado: {rate.estimatedDays}
+                                    {rate.description ? ` · ${rate.description}` : ''}
+                                  </p>
+                                  {rate.freeOverAmount > 0 && ratePrice > 0 && (
+                                    <p className="text-[11px] text-emerald-700 mt-0.5">
+                                      Envío gratis en compras desde{' '}
+                                      {formatCurrency(rate.freeOverAmount)}
+                                    </p>
+                                  )}
+                                </div>
+                                <span
+                                  className={`text-xs font-mono font-bold tabular-nums shrink-0 ${
+                                    ratePrice === 0 ? 'text-emerald-700' : 'text-zinc-950'
+                                  }`}
+                                >
+                                  {ratePrice === 0 ? 'Sin cargo' : formatCurrency(ratePrice)}
+                                </span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                   <div>
                     <label className="block text-xs font-medium text-zinc-700 mb-1">
@@ -1398,7 +1488,13 @@ export function CheckoutModal({
                     </span>
                   </div>
                   <div className="flex justify-between text-zinc-600">
-                    <span>{isPickup ? 'Costo de retiro' : 'Envío'}</span>
+                    <span>
+                      {isPickup
+                        ? 'Costo de retiro'
+                        : selectedRate
+                          ? `Envío (${selectedRate.name})`
+                          : 'Envío'}
+                    </span>
                     <span
                       className={`font-mono tabular-nums ${
                         shippingCost === 0 ? 'text-emerald-700 font-medium' : ''

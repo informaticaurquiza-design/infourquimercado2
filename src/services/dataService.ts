@@ -22,6 +22,7 @@ import type {
   Product,
   ProductCondition,
   ShipmentStatus,
+  ShippingRate,
   SubscriptionPayment,
   SubscriptionPaymentMethod,
   UserProfile,
@@ -36,12 +37,14 @@ import {
   createOrUpdateCategory as cloudCreateOrUpdateCategory,
   createOrUpdateDeliveryAgent as cloudCreateOrUpdateDeliveryAgent,
   createOrUpdateProduct as cloudCreateOrUpdateProduct,
+  createOrUpdateShippingRate as cloudCreateOrUpdateShippingRate,
   createOrderWithInventoryUpdate as cloudCreateOrderWithInventoryUpdate,
   deleteBenefitById as cloudDeleteBenefitById,
   deleteCategoryById as cloudDeleteCategoryById,
   deleteDeliveryAgentById as cloudDeleteDeliveryAgentById,
   deleteNotificationById as cloudDeleteNotificationById,
   deleteProductById as cloudDeleteProductById,
+  deleteShippingRateById as cloudDeleteShippingRateById,
   lookupOrderByCode as cloudLookupOrderByCode,
   markNotificationRead as cloudMarkNotificationRead,
   revertOrderShipmentStatus as cloudRevertOrderShipmentStatus,
@@ -72,6 +75,8 @@ export interface UnifiedCheckoutOrderInput {
   shippingPostalCode: string;
   shippingNotes: string;
   deliveryMethod?: DeliveryMethod;
+  shippingCarrier?: string;
+  estimatedDelivery?: string;
   subtotal: number;
   discount: number;
   shippingCost: number;
@@ -315,6 +320,24 @@ export async function saveAdminBillingSettings(
   input: { bankAlias: string; bankCbuCvu: string; bankAccountHolder: string },
 ): Promise<void> {
   await cloudSaveAdminBillingSettings(user, input);
+}
+
+export async function createOrUpdateShippingRate(input: {
+  id?: string;
+  ownerName?: string;
+  name: string;
+  zone: string;
+  cost: number;
+  freeOverAmount: number;
+  estimatedDays: string;
+  description: string;
+  active: boolean;
+}): Promise<ShippingRate> {
+  return cloudCreateOrUpdateShippingRate(input);
+}
+
+export async function deleteShippingRateById(rateId: string): Promise<void> {
+  await cloudDeleteShippingRateById(rateId);
 }
 
 export async function parseTransferReceipt(imageDataUrl: string): Promise<ParsedReceiptInfo> {

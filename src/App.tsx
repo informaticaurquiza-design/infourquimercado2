@@ -61,6 +61,7 @@ import {
   type DeliveryAgent,
   type Order,
   type Product,
+  type ShippingRate,
   type StoreSettings,
   type SubscriptionPayment,
   type UserProfile,
@@ -186,6 +187,9 @@ function AppContent() {
     freeShippingThreshold: FREE_SHIPPING_THRESHOLD,
     standardShippingCost: STANDARD_SHIPPING_COST,
   });
+  const [activeShippingRates, setActiveShippingRates] = useState<ShippingRate[]>([]);
+  const [ownShippingRates, setOwnShippingRates] = useState<ShippingRate[]>([]);
+  const [adminShippingRates, setAdminShippingRates] = useState<ShippingRate[]>([]);
   const [adminBillingSettings, setAdminBillingSettings] = useState<AdminBillingSettings | null>(
     null,
   );
@@ -679,6 +683,85 @@ function AppContent() {
     );
     return () => unsubscribe();
   }, [cloudAuthReady, isAdmin, cloudUser]);
+
+  // 4e2. Real-time Custom Shipping Rates (Tarifas de Envío por cliente/vendedor)
+  useEffect(() => {
+    if (!cloudAuthReady) return;
+    const isBootstrappedAdminAccount =
+      isAdmin &&
+      Boolean(cloudUser?.emailVerified) &&
+      cloudUser?.email?.toLowerCase() === 'informaticaurquiza@gmail.com';
+
+    if (isBootstrappedAdminAccount) {
+      setActiveShippingRates([]);
+      setOwnShippingRates([]);
+      const unsubAll = onSnapshot(
+        query(collection(db, 'shippingRates')),
+        (snapshot) => {
+          const list = snapshot.docs
+            .map((d) => ({
+              id: d.id,
+              ...(d.data() as Omit<ShippingRate, 'id'>),
+            }))
+            .sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt));
+          setAdminShippingRates(list);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'shippingRates');
+        },
+      );
+      return () => unsubAll();
+    }
+
+    setAdminShippingRates([]);
+    const unsubActive = onSnapshot(
+      query(collection(db, 'shippingRates'), where('active', '==', true)),
+      (snapshot) => {
+        const list = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<ShippingRate, 'id'>),
+        }));
+        setActiveShippingRates(list);
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'shippingRates');
+      },
+    );
+
+    let unsubOwn: (() => void) | null = null;
+    if (cloudUser) {
+      unsubOwn = onSnapshot(
+        query(collection(db, 'shippingRates'), where('ownerId', '==', cloudUser.uid)),
+        (snapshot) => {
+          const list = snapshot.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<ShippingRate, 'id'>),
+          }));
+          setOwnShippingRates(list);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'shippingRates');
+        },
+      );
+    } else {
+      setOwnShippingRates([]);
+    }
+
+    return () => {
+      unsubActive();
+      unsubOwn?.();
+    };
+  }, [cloudAuthReady, isAdmin, cloudUser]);
+
+  const shippingRates = useMemo(() => {
+    if (adminShippingRates.length > 0) return adminShippingRates;
+    const byId = new Map<string, ShippingRate>();
+    for (const rate of activeShippingRates) byId.set(rate.id, rate);
+    for (const rate of ownShippingRates) byId.set(rate.id, rate);
+    return Array.from(byId.values()).sort(
+      (a, b) => getMillis(b.createdAt) - getMillis(a.createdAt),
+    );
+  }, [adminShippingRates, activeShippingRates, ownShippingRates]);
 
   // 4f. Real-time Benefits Listeners (Firestore)
   useEffect(() => {
@@ -1380,6 +1463,7 @@ function AppContent() {
             benefits={benefits}
             subscriptionPayments={subscriptionPayments}
             shippingSettings={shippingSettings}
+            shippingRates={shippingRates}
             adminBillingSettings={adminBillingSettings}
             onRequireSignIn={() => setAccountOpen(true)}
             onProfileSaved={(updates) => {
@@ -1437,6 +1521,7 @@ function AppContent() {
         onClose={() => setCartOpen(false)}
         items={cart}
         shippingSettings={shippingSettings}
+        shippingRates={shippingRates}
         benefits={benefits}
         user={activeUser}
         onUpdateQuantity={handleUpdateCartQty}
@@ -1454,6 +1539,7 @@ function AppContent() {
         onClose={() => setCheckoutOpen(false)}
         items={cart}
         shippingSettings={shippingSettings}
+        shippingRates={shippingRates}
         benefits={benefits}
         promoCode={promoCode}
         user={activeUser}

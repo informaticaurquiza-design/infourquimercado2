@@ -12,8 +12,6 @@ import {
   Minus,
   Package,
   Plus,
-  RotateCcw,
-  Save,
   ScanBarcode,
   Search,
   Send,
@@ -39,9 +37,7 @@ import {
 import { getDefaultCategoryImage } from '../lib/categoryAssets';
 import { getProductGallery } from '../lib/imageTools';
 import {
-  FREE_SHIPPING_THRESHOLD,
   SELLER_TRIAL_NOTICE,
-  STANDARD_SHIPPING_COST,
   formatBenefitSummary,
   formatCurrency,
   formatDateTime,
@@ -59,7 +55,6 @@ import {
   advanceOrderShipmentStatus,
   createOrUpdateProduct,
   deleteProductById,
-  saveShippingSettings,
   sendAdminPushNotification,
   updateUserProfile,
 } from '../services/dataService';
@@ -77,6 +72,7 @@ import {
   type Product,
   type ProductCondition,
   type ShipmentStatus,
+  type ShippingRate,
   type StoreSettings,
   type SubscriptionPayment,
   type UserProfile,
@@ -88,6 +84,7 @@ import { DatabaseBackupPanel } from './DatabaseBackupPanel';
 import { FacebookShareModal } from './FacebookShareModal';
 import { ProductImage } from './ProductImage';
 import { ProductImagesEditor } from './ProductImagesEditor';
+import { ShippingRatesPanel } from './ShippingRatesPanel';
 import { SkuBarcodeScannerModal } from './SkuBarcodeScannerModal';
 import { SubscriptionPaymentPanel } from './SubscriptionPaymentPanel';
 
@@ -102,6 +99,7 @@ interface AdminDashboardViewProps {
   benefits: CustomerBenefit[];
   subscriptionPayments: SubscriptionPayment[];
   shippingSettings: StoreSettings;
+  shippingRates: ShippingRate[];
   adminBillingSettings: AdminBillingSettings | null;
   onRequireSignIn: () => void;
   onProfileSaved?: (updates: Partial<UserProfile>) => void;
@@ -154,6 +152,7 @@ export function AdminDashboardView({
   benefits,
   subscriptionPayments,
   shippingSettings,
+  shippingRates,
   adminBillingSettings,
   onRequireSignIn,
   onProfileSaved,
@@ -190,24 +189,11 @@ export function AdminDashboardView({
 
   useEffect(() => {
     if (!isAdmin) {
-      setActiveTab((curr) => (curr === 'inventory' || curr === 'subscription' ? curr : 'inventory'));
+      setActiveTab((curr) =>
+        curr === 'inventory' || curr === 'shipping' || curr === 'subscription' ? curr : 'inventory',
+      );
     }
   }, [isAdmin]);
-
-  // Shipping settings form state
-  const [freeThresholdInput, setFreeThresholdInput] = useState(
-    String(shippingSettings.freeShippingThreshold),
-  );
-  const [shippingCostInput, setShippingCostInput] = useState(
-    String(shippingSettings.standardShippingCost),
-  );
-  const [shippingFormError, setShippingFormError] = useState('');
-  const [savingShipping, setSavingShipping] = useState(false);
-
-  useEffect(() => {
-    setFreeThresholdInput(String(shippingSettings.freeShippingThreshold));
-    setShippingCostInput(String(shippingSettings.standardShippingCost));
-  }, [shippingSettings.freeShippingThreshold, shippingSettings.standardShippingCost]);
 
   // Product modal state
   const [productModalOpen, setProductModalOpen] = useState(false);
@@ -777,39 +763,6 @@ export function AdminDashboardView({
     }
   }
 
-  async function handleSaveShippingSettings(e: React.FormEvent) {
-    e.preventDefault();
-    if (!user) return;
-    setShippingFormError('');
-
-    const parsedThreshold = Number(freeThresholdInput);
-    const parsedCost = Number(shippingCostInput);
-
-    if (freeThresholdInput.trim() === '' || !Number.isFinite(parsedThreshold) || parsedThreshold < 0) {
-      setShippingFormError('Ingresá un valor numérico válido (mayor o igual a 0) para compras con envío gratis.');
-      return;
-    }
-    if (shippingCostInput.trim() === '' || !Number.isFinite(parsedCost) || parsedCost < 0) {
-      setShippingFormError('Ingresá un valor numérico válido (mayor o igual a 0) para el costo de envío.');
-      return;
-    }
-
-    setSavingShipping(true);
-    try {
-      await saveShippingSettings(user, {
-        freeShippingThreshold: parsedThreshold,
-        standardShippingCost: parsedCost,
-      });
-      onNotifyToast('Tarifas de envío actualizadas en tiempo real para toda la tienda.');
-    } catch (err) {
-      setShippingFormError(
-        err instanceof Error ? err.message : 'No pudimos guardar la configuración de envíos.',
-      );
-    } finally {
-      setSavingShipping(false);
-    }
-  }
-
   if (!user) {
     return (
       <div className="max-w-xl mx-auto px-4 py-16 text-center">
@@ -868,6 +821,7 @@ export function AdminDashboardView({
               ] as const)
             : ([
                 { id: 'inventory', label: 'Mis Publicaciones', icon: Package },
+                { id: 'shipping', label: 'Tarifas de Envío', icon: Settings },
                 { id: 'subscription', label: 'Pago Mensual', icon: CreditCard },
               ] as const)
           ).map((tab) => {
@@ -1652,190 +1606,17 @@ export function AdminDashboardView({
         </div>
       )}
 
-      {/* TAB 4: SHIPPING TARIFF CONFIGURATION */}
-      {activeTab === 'shipping' && (() => {
-        const previewThreshold = Math.max(0, Number(freeThresholdInput) || 0);
-        const previewCost = Math.max(0, Number(shippingCostInput) || 0);
-        const sampleBelow =
-          previewThreshold > 20000
-            ? Math.round(previewThreshold * 0.6)
-            : previewThreshold > 0
-              ? Math.max(1000, Math.round(previewThreshold / 2))
-              : 45000;
-        const sampleAbove = Math.max(previewThreshold, 50000);
-        const feeBelow = previewThreshold === 0 ? 0 : previewCost;
-
-        return (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            <div className="lg:col-span-7 bg-white border border-zinc-200 rounded-xl p-6 sm:p-8">
-              <div className="pb-5 mb-6 border-b border-zinc-200">
-                <h2 className="font-display text-lg font-bold text-zinc-950">
-                  Configuración de envío y bonificación
-                </h2>
-                <p className="text-sm text-zinc-600 mt-1">
-                  Definí el monto a partir del cual el envío es gratuito y el valor fijo para
-                  compras inferiores. Los cambios impactan al instante en el catálogo, carrito y
-                  pasarela de pagos.
-                </p>
-              </div>
-
-              {shippingFormError && (
-                <div className="mb-5 p-3.5 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg">
-                  {shippingFormError}
-                </div>
-              )}
-
-              <form onSubmit={handleSaveShippingSettings} className="space-y-5">
-                <div>
-                  <label
-                    htmlFor="free-shipping-threshold"
-                    className="block text-xs font-semibold text-zinc-800 mb-1.5"
-                  >
-                    Compras mayores o iguales a — Envío gratis (ARS)
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-sm text-zinc-400">
-                      $
-                    </span>
-                    <input
-                      id="free-shipping-threshold"
-                      type="number"
-                      min={0}
-                      max={100000000}
-                      step={500}
-                      required
-                      value={freeThresholdInput}
-                      onChange={(e) => setFreeThresholdInput(e.target.value)}
-                      className="w-full pl-8 pr-4 py-2.5 text-sm font-mono tabular-nums border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                    />
-                  </div>
-                  <p className="text-xs text-zinc-500 mt-1.5">
-                    Las compras que alcancen o superen este monto tendrán envío sin cargo. Ingresá{' '}
-                    <span className="font-mono text-zinc-700">0</span> para bonificar todos los
-                    envíos sin mínimo.
-                  </p>
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="standard-shipping-cost"
-                    className="block text-xs font-semibold text-zinc-800 mb-1.5"
-                  >
-                    Valor del costo de envío estándar (ARS)
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-sm text-zinc-400">
-                      $
-                    </span>
-                    <input
-                      id="standard-shipping-cost"
-                      type="number"
-                      min={0}
-                      max={10000000}
-                      step={100}
-                      required
-                      value={shippingCostInput}
-                      onChange={(e) => setShippingCostInput(e.target.value)}
-                      className="w-full pl-8 pr-4 py-2.5 text-sm font-mono tabular-nums border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                    />
-                  </div>
-                  <p className="text-xs text-zinc-500 mt-1.5">
-                    Importe que se sumará automáticamente en el carrito y checkout cuando el pedido
-                    sea menor al monto de envío gratis.
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-zinc-200">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setFreeThresholdInput(String(FREE_SHIPPING_THRESHOLD));
-                      setShippingCostInput(String(STANDARD_SHIPPING_COST));
-                      setShippingFormError('');
-                    }}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-medium text-zinc-700 bg-white border border-zinc-300 hover:border-zinc-950 rounded-lg transition-colors cursor-pointer"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    Restablecer sugeridos
-                  </button>
-
-                  <button
-                    type="submit"
-                    disabled={savingShipping}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-60 rounded-lg transition-colors cursor-pointer"
-                  >
-                    <Save className="w-4 h-4" />
-                    {savingShipping ? 'Guardando...' : 'Guardar configuración'}
-                  </button>
-                </div>
-              </form>
-            </div>
-
-            {/* Live Calculation Preview */}
-            <div className="lg:col-span-5 bg-white border border-zinc-200 rounded-xl p-6 space-y-5">
-              <div>
-                <h3 className="font-display text-sm font-bold text-zinc-950">
-                  Simulación de cobro en checkout
-                </h3>
-                <p className="text-xs text-zinc-500 mt-0.5">
-                  Así se calculará el envío para tus clientes con los valores ingresados.
-                </p>
-              </div>
-
-              <div className="space-y-3 text-xs border-t border-zinc-200 pt-4">
-                <p className="font-semibold text-zinc-800">Caso 1 · Compra menor al mínimo</p>
-                <div className="flex justify-between text-zinc-600">
-                  <span>Subtotal carrito</span>
-                  <span className="font-mono tabular-nums">{formatCurrency(sampleBelow)}</span>
-                </div>
-                <div className="flex justify-between text-zinc-600">
-                  <span>Costo de envío</span>
-                  <span className="font-mono tabular-nums">
-                    {feeBelow === 0 ? 'Sin cargo' : formatCurrency(feeBelow)}
-                  </span>
-                </div>
-                <div className="flex justify-between font-semibold text-zinc-950 pt-2 border-t border-zinc-100">
-                  <span>Total cliente</span>
-                  <span className="font-mono tabular-nums">
-                    {formatCurrency(sampleBelow + feeBelow)}
-                  </span>
-                </div>
-              </div>
-
-              <div className="space-y-3 text-xs border-t border-zinc-200 pt-4">
-                <p className="font-semibold text-zinc-800">
-                  Caso 2 · Compra mayor o igual a {formatCurrency(previewThreshold)}
-                </p>
-                <div className="flex justify-between text-zinc-600">
-                  <span>Subtotal carrito</span>
-                  <span className="font-mono tabular-nums">{formatCurrency(sampleAbove)}</span>
-                </div>
-                <div className="flex justify-between text-emerald-700 font-medium">
-                  <span>Costo de envío</span>
-                  <span className="font-mono">Sin cargo</span>
-                </div>
-                <div className="flex justify-between font-semibold text-zinc-950 pt-2 border-t border-zinc-100">
-                  <span>Total cliente</span>
-                  <span className="font-mono tabular-nums">{formatCurrency(sampleAbove)}</span>
-                </div>
-              </div>
-
-              <div className="pt-4 border-t border-zinc-200 text-[11px] text-zinc-500 space-y-1">
-                <p>
-                  Valor activo guardado:{' '}
-                  <span className="font-mono text-zinc-800 tabular-nums">
-                    Gratis desde {formatCurrency(shippingSettings.freeShippingThreshold)} · Envío{' '}
-                    {formatCurrency(shippingSettings.standardShippingCost)}
-                  </span>
-                </p>
-                {shippingSettings.updatedAt && (
-                  <p>Última actualización: {formatDateTime(shippingSettings.updatedAt)}</p>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {/* TAB 4: SHIPPING TARIFF CONFIGURATION (All authenticated users + admin global fallback) */}
+      {activeTab === 'shipping' && (
+        <ShippingRatesPanel
+          user={user}
+          profile={profile}
+          isAdmin={isAdmin}
+          shippingRates={shippingRates}
+          shippingSettings={shippingSettings}
+          onNotifyToast={onNotifyToast}
+        />
+      )}
 
       {/* TAB 5: PUSH BROADCAST COMPOSER */}
       {activeTab === 'push' && (
