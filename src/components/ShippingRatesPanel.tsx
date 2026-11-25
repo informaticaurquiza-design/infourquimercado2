@@ -41,49 +41,13 @@ interface ShippingRatesPanelProps {
 
 const RATE_PRESETS = [
   {
-    label: 'Envío local / CABA',
+    label: 'Envío local',
     name: 'Envío local',
-    zone: 'CABA / Zona local',
+    zone: 'Zona local',
     cost: '4500',
     freeOverAmount: '80000',
     estimatedDays: '24 a 48 hs',
     description: 'Entrega en domicilio por mensajería propia.',
-  },
-  {
-    label: 'Moto en el día',
-    name: 'Moto Express en el día',
-    zone: 'Radio local / CABA',
-    cost: '6500',
-    freeOverAmount: '0',
-    estimatedDays: 'En el día (compras antes de las 14 hs)',
-    description: 'Despacho prioritario con entrega en el día.',
-  },
-  {
-    label: 'Envío GBA / Alrededores',
-    name: 'Envío GBA',
-    zone: 'Gran Buenos Aires',
-    cost: '7500',
-    freeOverAmount: '120000',
-    estimatedDays: '24 a 72 hs',
-    description: 'Envío a domicilio en cordones del GBA.',
-  },
-  {
-    label: 'Envío al interior',
-    name: 'Correo al interior',
-    zone: 'Interior del país',
-    cost: '11000',
-    freeOverAmount: '180000',
-    estimatedDays: '3 a 6 días hábiles',
-    description: 'Despacho por correo nacional con seguimiento.',
-  },
-  {
-    label: 'Envío bonificado ($ 0)',
-    name: 'Envío sin cargo',
-    zone: 'Zona de cobertura propia',
-    cost: '0',
-    freeOverAmount: '0',
-    estimatedDays: '24 a 48 hs',
-    description: 'Envío bonificado al 100% para todos los pedidos.',
   },
 ];
 
@@ -359,7 +323,7 @@ export function ShippingRatesPanel({
 
           {!editingRateId && (
             <div className="space-y-1.5">
-              <p className="text-[11px] font-medium text-zinc-500">Plantillas rápidas:</p>
+              <p className="text-[11px] font-medium text-zinc-500">Plantilla rápida:</p>
               <div className="flex flex-wrap gap-1.5">
                 {RATE_PRESETS.map((preset) => (
                   <button
@@ -552,8 +516,9 @@ export function ShippingRatesPanel({
                 Todavía no generaste tarifas de envío propias
               </p>
               <p className="text-xs text-zinc-500 max-w-md mx-auto leading-relaxed">
-                Usá el formulario o las plantillas rápidas para definir tus zonas de entrega, costos
-                y montos de envío bonificado. Actualmente se aplica la tarifa general de la tienda (
+                Usá el formulario o la plantilla rápida de envío local para definir tus zonas de
+                entrega, costos y montos de envío bonificado. Actualmente se aplica la tarifa
+                general de la tienda (
                 {shippingSettings.freeShippingThreshold === 0
                   ? 'Envío gratis'
                   : `${formatCurrency(shippingSettings.standardShippingCost)} · Gratis desde ${formatCurrency(shippingSettings.freeShippingThreshold)}`}
