@@ -45,6 +45,7 @@ import {
   lookupOrderByCode as cloudLookupOrderByCode,
   markNotificationRead as cloudMarkNotificationRead,
   revertOrderShipmentStatus as cloudRevertOrderShipmentStatus,
+  saveAdminBillingSettings as cloudSaveAdminBillingSettings,
   saveShippingSettings as cloudSaveShippingSettings,
   sendAdminPushNotification as cloudSendAdminPushNotification,
   submitCloudSubscriptionPayment,
@@ -309,6 +310,13 @@ export async function saveShippingSettings(
   await cloudSaveShippingSettings(user, input);
 }
 
+export async function saveAdminBillingSettings(
+  user: AppUser,
+  input: { bankAlias: string; bankCbuCvu: string; bankAccountHolder: string },
+): Promise<void> {
+  await cloudSaveAdminBillingSettings(user, input);
+}
+
 export async function parseTransferReceipt(imageDataUrl: string): Promise<ParsedReceiptInfo> {
   const currentUser = auth.currentUser;
   if (!currentUser) {
@@ -345,6 +353,7 @@ export async function submitSubscriptionPayment(input: {
   user: AppUser;
   profile: UserProfile | null;
   paymentMethod: SubscriptionPaymentMethod;
+  amount?: number;
   note?: string;
   paymentReceipt?: PaymentReceipt;
 }): Promise<SubscriptionPayment> {

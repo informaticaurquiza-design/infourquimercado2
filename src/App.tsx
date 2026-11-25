@@ -43,6 +43,7 @@ import { updateUserProfile } from './services/dataService';
 import {
   checkIsAdmin,
   ensureUserProfile,
+  saveAdminBillingSettings,
   seedDefaultCategoriesIfEmpty,
   seedInitialStoreData,
   updateUserProfile as firestoreUpdateUserProfile,
@@ -50,6 +51,7 @@ import {
 import {
   CATEGORIES,
   type ActiveView,
+  type AdminBillingSettings,
   type AppNotification,
   type AppUser,
   type CartItem,
@@ -184,6 +186,11 @@ function AppContent() {
     freeShippingThreshold: FREE_SHIPPING_THRESHOLD,
     standardShippingCost: STANDARD_SHIPPING_COST,
   });
+  const [adminBillingSettings, setAdminBillingSettings] = useState<AdminBillingSettings | null>(
+    null,
+  );
+  const [billingSettingsLoaded, setBillingSettingsLoaded] = useState(false);
+  const lastSyncedAdminBankKeyRef = useRef('');
 
   // Cart & Checkout State
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -364,6 +371,69 @@ function AppContent() {
     );
     return () => unsubscribe();
   }, [cloudAuthReady, cloudUser]);
+
+  // 2d. Real-time Administrator Billing Bank Details Listener (settings/billing)
+  useEffect(() => {
+    if (!cloudAuthReady || !cloudUser) {
+      setAdminBillingSettings(null);
+      setBillingSettingsLoaded(false);
+      lastSyncedAdminBankKeyRef.current = '';
+      return;
+    }
+    const unsubscribe = onSnapshot(
+      doc(db, 'settings', 'billing'),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data() as Partial<AdminBillingSettings>;
+          setAdminBillingSettings({
+            bankAlias: typeof data.bankAlias === 'string' ? data.bankAlias : '',
+            bankCbuCvu: typeof data.bankCbuCvu === 'string' ? data.bankCbuCvu : '',
+            bankAccountHolder:
+              typeof data.bankAccountHolder === 'string' ? data.bankAccountHolder : '',
+            updatedBy: data.updatedBy,
+            updatedAt: data.updatedAt,
+          });
+        } else {
+          setAdminBillingSettings(null);
+        }
+        setBillingSettingsLoaded(true);
+      },
+      () => {
+        setBillingSettingsLoaded(true);
+      },
+    );
+    return () => unsubscribe();
+  }, [cloudAuthReady, cloudUser]);
+
+  // 2e. Auto-sync Admin's Profile Bank Details into settings/billing when needed
+  useEffect(() => {
+    if (!cloudAuthReady || !cloudUser || !isAdmin || !profile || !billingSettingsLoaded) return;
+    const pAlias = (profile.bankAlias || '').trim();
+    const pCbu = (profile.bankCbuCvu || '').trim();
+    const pHolder = (profile.bankAccountHolder || '').trim();
+    if (!pAlias && !pCbu && !pHolder) return;
+
+    const bAlias = (adminBillingSettings?.bankAlias || '').trim();
+    const bCbu = (adminBillingSettings?.bankCbuCvu || '').trim();
+    const bHolder = (adminBillingSettings?.bankAccountHolder || '').trim();
+
+    if (pAlias === bAlias && pCbu === bCbu && pHolder === bHolder) return;
+
+    const syncKey = `${cloudUser.uid}|${pAlias}|${pCbu}|${pHolder}`;
+    if (lastSyncedAdminBankKeyRef.current === syncKey) return;
+    lastSyncedAdminBankKeyRef.current = syncKey;
+
+    const adminAppUser = toAppUserFromFirebase(cloudUser);
+    if (!adminAppUser) return;
+    void saveAdminBillingSettings(adminAppUser, {
+      bankAlias: pAlias,
+      bankCbuCvu: pCbu,
+      bankAccountHolder: pHolder,
+    }).catch(() => {
+      // Allow retry if sync failed transiently
+      lastSyncedAdminBankKeyRef.current = '';
+    });
+  }, [cloudAuthReady, cloudUser, isAdmin, profile, billingSettingsLoaded, adminBillingSettings]);
 
   // 3. Real-time Orders Listener (Admin sees all; users see purchases + orders where they are seller)
   useEffect(() => {
@@ -1310,6 +1380,7 @@ function AppContent() {
             benefits={benefits}
             subscriptionPayments={subscriptionPayments}
             shippingSettings={shippingSettings}
+            adminBillingSettings={adminBillingSettings}
             onRequireSignIn={() => setAccountOpen(true)}
             onProfileSaved={(updates) => {
               setProfile((prev) => (prev ? { ...prev, ...updates } : prev));

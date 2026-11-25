@@ -38,9 +38,11 @@ import {
   STANDARD_SHIPPING_COST,
   TRACKING_CODE_PATTERN,
   clampString,
+  formatCurrency,
   generateOrderNumber,
   generateTrackingCode,
   generateTransactionId,
+  getAccountSubscriptionInfo,
   getPreviousShipmentStatus,
   slugifyCategoryId,
   validateBenefitInput,
@@ -197,6 +199,35 @@ export async function updateUserProfile(
         }
       } catch {
         // Ignore if user has no active seller subscription or no products
+      }
+
+      // If this user is an administrator, keep settings/billing synced with their bank details
+      // so sellers can read destination bank info for monthly payments without reading admin PII.
+      try {
+        if (auth.currentUser && auth.currentUser.uid === uid && (await checkIsAdmin(auth.currentUser))) {
+          const freshSnap = await getDoc(ref);
+          const freshProfile = freshSnap.exists() ? (freshSnap.data() as Partial<UserProfile>) : {};
+          await setDoc(doc(db, 'settings', 'billing'), {
+            bankAlias: clampString(
+              updates.bankAlias !== undefined ? updates.bankAlias : freshProfile.bankAlias || '',
+              60,
+            ),
+            bankCbuCvu: clampString(
+              updates.bankCbuCvu !== undefined ? updates.bankCbuCvu : freshProfile.bankCbuCvu || '',
+              32,
+            ),
+            bankAccountHolder: clampString(
+              updates.bankAccountHolder !== undefined
+                ? updates.bankAccountHolder
+                : freshProfile.bankAccountHolder || '',
+              120,
+            ),
+            updatedBy: uid,
+            updatedAt: serverTimestamp(),
+          });
+        }
+      } catch {
+        // Best-effort sync; admin can also sync directly from the subscription panel
       }
     }
   } catch (error) {
@@ -1233,6 +1264,24 @@ export async function saveShippingSettings(
   }
 }
 
+export async function saveAdminBillingSettings(
+  user: AppUser,
+  input: { bankAlias: string; bankCbuCvu: string; bankAccountHolder: string },
+): Promise<void> {
+  const settingsPath = 'settings/billing';
+  try {
+    await setDoc(doc(db, 'settings', 'billing'), {
+      bankAlias: clampString(input.bankAlias || '', 60),
+      bankCbuCvu: clampString(input.bankCbuCvu || '', 32),
+      bankAccountHolder: clampString(input.bankAccountHolder || '', 120),
+      updatedBy: user.uid,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, settingsPath);
+  }
+}
+
 function serializeFirestoreDate(value: unknown, fallbackIso: string): string {
   if (typeof value === 'string' && value.trim()) return value;
   if (
@@ -1758,6 +1807,7 @@ export async function submitCloudSubscriptionPayment(input: {
   user: AppUser;
   profile: UserProfile | null;
   paymentMethod: SubscriptionPaymentMethod;
+  amount?: number;
   note?: string;
   paymentReceipt?: PaymentReceipt;
 }): Promise<SubscriptionPayment> {
@@ -1781,13 +1831,18 @@ export async function submitCloudSubscriptionPayment(input: {
   const userEmail = clampString(input.profile?.email || input.user.email || 'cliente@infourqui', 120);
   const businessName = clampString(input.profile?.businessName || '', 120);
   const note = clampString(input.note || '', 240);
+  const computedAmount = getAccountSubscriptionInfo(input.profile).monthlyAmount;
+  const resolvedAmount =
+    typeof input.amount === 'number' && Number.isFinite(input.amount) && input.amount >= 1
+      ? Math.min(10000000, Math.round(input.amount))
+      : computedAmount || MONTHLY_SUBSCRIPTION_COST;
 
   const payload = {
     userId: input.user.uid,
     userName: userName.length >= 1 ? userName : 'Cliente',
     businessName,
     userEmail: userEmail.length >= 3 ? userEmail : 'cliente@infourqui',
-    amount: MONTHLY_SUBSCRIPTION_COST,
+    amount: resolvedAmount,
     paymentMethod: input.paymentMethod,
     note,
     ...(cleanReceipt ? { paymentReceipt: cleanReceipt } : {}),
@@ -1893,11 +1948,12 @@ export async function adminSetCloudAccountStatus(input: {
         });
       }
 
+      const targetMonthlyAmount = getAccountSubscriptionInfo(input.targetUser).monthlyAmount;
+
       batch.set(doc(db, 'notifications', notifId), {
         userId: input.targetUser.uid,
         title: 'Publicaciones pausadas',
-        message:
-          'Tu cuenta pasó a estado inactivo. Registrá tu pago mensual de $ 5.000 desde el Panel de control para reactivar tus publicaciones.',
+        message: `Tu cuenta pasó a estado inactivo. Registrá tu pago mensual de ${formatCurrency(targetMonthlyAmount)} desde el Panel de control para reactivar tus publicaciones.`,
         type: 'inventory',
         orderId: '',
         read: false,
@@ -1929,8 +1985,7 @@ export async function adminRejectCloudSubscriptionPayment(
     batch.set(doc(db, 'notifications', notifId), {
       userId: payment.userId,
       title: 'Comprobante de abono rechazado',
-      message:
-        'No pudimos validar tu comprobante de pago mensual ($ 5.000). Por favor volvé a cargar un comprobante legible desde el Panel de control.',
+      message: `No pudimos validar tu comprobante de pago mensual (${formatCurrency(payment.amount)}). Por favor volvé a cargar un comprobante legible desde el Panel de control.`,
       type: 'order',
       orderId: '',
       read: false,

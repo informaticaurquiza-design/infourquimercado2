@@ -336,6 +336,14 @@ export interface StoreSettings {
   updatedAt?: Timestamp | string;
 }
 
+export interface AdminBillingSettings {
+  bankAlias: string;
+  bankCbuCvu: string;
+  bankAccountHolder: string;
+  updatedBy?: string;
+  updatedAt?: Timestamp | string;
+}
+
 export interface AppUser {
   uid: string;
   email: string | null;

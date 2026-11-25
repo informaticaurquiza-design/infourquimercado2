@@ -21,9 +21,11 @@ export const DATE_ONLY_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 export const FREE_SHIPPING_THRESHOLD = 150000;
 export const STANDARD_SHIPPING_COST = 8500;
 export const SELLER_TRIAL_DAYS = 30;
-export const MONTHLY_SUBSCRIPTION_COST = 5000;
+export const MONTHLY_SUBSCRIPTION_COST_TIER_1 = 5000;
+export const MONTHLY_SUBSCRIPTION_COST_TIER_2 = 10000;
+export const MONTHLY_SUBSCRIPTION_COST = MONTHLY_SUBSCRIPTION_COST_TIER_1;
 export const SELLER_TRIAL_NOTICE =
-  'Los primeros 30 dias de uso de la cuenta para vendedores son gratis, pasado los 30 dias tiene un costo de $ 5000';
+  'El primer mes (30 días) de uso para vendedores es gratis. A partir del 2° mes el abono es de $ 5.000 y a partir del 4° mes el valor es de $ 10.000.';
 
 export function clampString(value: string, maxLength: number): string {
   return value.trim().slice(0, maxLength);
@@ -635,6 +637,10 @@ export interface AccountSubscriptionInfo {
   paidUntilDate: Date | null;
   effectiveExpiresAt: Date | null;
   daysRemaining: number;
+  accountMonth: number;
+  currentMonthCost: number;
+  monthlyAmount: number;
+  tierLabel: string;
 }
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
@@ -655,15 +661,19 @@ export function getAccountSubscriptionInfo(
     return {
       isActive: true,
       status: 'trial',
-      label: 'Período gratuito (30 días)',
-      statusLabel: 'Período gratuito (30 días)',
-      detailText: `Quedan ${SELLER_TRIAL_DAYS} días de prueba gratuita para vendedores.`,
+      label: 'Período gratuito (1° mes)',
+      statusLabel: 'Primer mes gratis (30 días)',
+      detailText: `Quedan ${SELLER_TRIAL_DAYS} días de prueba gratuita. A partir del 2° mes el abono es de ${formatCurrency(MONTHLY_SUBSCRIPTION_COST_TIER_1)} y desde el 4° mes ${formatCurrency(MONTHLY_SUBSCRIPTION_COST_TIER_2)}.`,
       joinedAtIso: joinedAtDate.toISOString(),
       joinedAtDate,
       trialEndsAtDate,
       paidUntilDate: null,
       effectiveExpiresAt: trialEndsAtDate,
       daysRemaining: SELLER_TRIAL_DAYS,
+      accountMonth: 1,
+      currentMonthCost: 0,
+      monthlyAmount: MONTHLY_SUBSCRIPTION_COST_TIER_1,
+      tierLabel: '1° mes — Gratis',
     };
   }
 
@@ -672,6 +682,33 @@ export function getAccountSubscriptionInfo(
   const joinedAtIso = joinedAtDate.toISOString();
   const trialEndsAtDate = new Date(joinedAtDate.getTime() + SELLER_TRIAL_DAYS * MS_PER_DAY);
   const paidUntilDate = parseTimestampValue(profile.subscriptionPaidUntil);
+
+  const elapsedDays = Math.max(0, Math.floor((now.getTime() - joinedAtDate.getTime()) / MS_PER_DAY));
+  const accountMonth = Math.floor(elapsedDays / SELLER_TRIAL_DAYS) + 1;
+  const currentMonthCost =
+    accountMonth <= 1
+      ? 0
+      : accountMonth >= 4
+        ? MONTHLY_SUBSCRIPTION_COST_TIER_2
+        : MONTHLY_SUBSCRIPTION_COST_TIER_1;
+
+  // Determine the payable monthly fee for the upcoming/current paid billing cycle
+  const billingBaseDate =
+    paidUntilDate && paidUntilDate.getTime() > now.getTime() ? paidUntilDate : now;
+  const billingElapsedDays = Math.max(
+    0,
+    Math.floor((billingBaseDate.getTime() - joinedAtDate.getTime()) / MS_PER_DAY),
+  );
+  const billingMonth = Math.max(2, Math.floor(billingElapsedDays / SELLER_TRIAL_DAYS) + 1);
+  const monthlyAmount =
+    billingMonth >= 4 ? MONTHLY_SUBSCRIPTION_COST_TIER_2 : MONTHLY_SUBSCRIPTION_COST_TIER_1;
+
+  const tierLabel =
+    accountMonth <= 1
+      ? '1° mes — Gratis'
+      : accountMonth >= 4
+        ? `${accountMonth}° mes — ${formatCurrency(MONTHLY_SUBSCRIPTION_COST_TIER_2)}/mes`
+        : `${accountMonth}° mes — ${formatCurrency(MONTHLY_SUBSCRIPTION_COST_TIER_1)}/mes`;
 
   if (profile.role === 'admin') {
     return {
@@ -686,6 +723,10 @@ export function getAccountSubscriptionInfo(
       paidUntilDate,
       effectiveExpiresAt: null,
       daysRemaining: 999,
+      accountMonth,
+      currentMonthCost: 0,
+      monthlyAmount,
+      tierLabel: 'Sin cargo (Administrador)',
     };
   }
 
@@ -695,14 +736,17 @@ export function getAccountSubscriptionInfo(
       status: 'inactive',
       label: 'Inactivo',
       statusLabel: 'Cuenta inactiva',
-      detailText:
-        'Publicaciones pausadas. Registrá el pago mensual de $ 5.000 para reactivar la cuenta.',
+      detailText: `Publicaciones pausadas. Registrá el pago mensual de ${formatCurrency(monthlyAmount)} para reactivar la cuenta.`,
       joinedAtIso,
       joinedAtDate,
       trialEndsAtDate,
       paidUntilDate,
       effectiveExpiresAt: paidUntilDate || trialEndsAtDate,
       daysRemaining: 0,
+      accountMonth,
+      currentMonthCost,
+      monthlyAmount,
+      tierLabel,
     };
   }
 
@@ -713,13 +757,17 @@ export function getAccountSubscriptionInfo(
         status: 'expired',
         label: 'Inactivo (abono vencido)',
         statusLabel: 'Abono mensual vencido',
-        detailText: `Venció el ${formatShortDate(paidUntilDate.toISOString())}. Aboná $ 5.000 para reactivar tus publicaciones.`,
+        detailText: `Venció el ${formatShortDate(paidUntilDate.toISOString())}. Aboná ${formatCurrency(monthlyAmount)} para reactivar tus publicaciones.`,
         joinedAtIso,
         joinedAtDate,
         trialEndsAtDate,
         paidUntilDate,
         effectiveExpiresAt: paidUntilDate,
         daysRemaining: 0,
+        accountMonth,
+        currentMonthCost,
+        monthlyAmount,
+        tierLabel,
       };
     }
     const daysRemaining = paidUntilDate
@@ -739,39 +787,51 @@ export function getAccountSubscriptionInfo(
       paidUntilDate,
       effectiveExpiresAt: paidUntilDate,
       daysRemaining,
+      accountMonth,
+      currentMonthCost,
+      monthlyAmount,
+      tierLabel,
     };
   }
 
-  // Default: 30-day free trial from joinedAt
+  // Default: 30-day free trial from joinedAt (1st month)
   const remainingMs = trialEndsAtDate.getTime() - now.getTime();
   if (remainingMs >= 0) {
     const daysRemaining = Math.max(1, Math.ceil(remainingMs / MS_PER_DAY));
     return {
       isActive: true,
       status: 'trial',
-      label: 'Activo (prueba 30 días)',
-      statusLabel: 'Prueba gratuita 30 días',
-      detailText: `Quedan ${daysRemaining} ${daysRemaining === 1 ? 'día' : 'días'} gratis (hasta el ${formatShortDate(trialEndsAtDate.toISOString())}).`,
+      label: 'Activo (1° mes gratis)',
+      statusLabel: 'Primer mes gratis (30 días)',
+      detailText: `Quedan ${daysRemaining} ${daysRemaining === 1 ? 'día' : 'días'} gratis (hasta el ${formatShortDate(trialEndsAtDate.toISOString())}). Luego el 2° y 3° mes cuestan ${formatCurrency(MONTHLY_SUBSCRIPTION_COST_TIER_1)}/mes y desde el 4° mes ${formatCurrency(MONTHLY_SUBSCRIPTION_COST_TIER_2)}/mes.`,
       joinedAtIso,
       joinedAtDate,
       trialEndsAtDate,
       paidUntilDate,
       effectiveExpiresAt: trialEndsAtDate,
       daysRemaining,
+      accountMonth,
+      currentMonthCost,
+      monthlyAmount,
+      tierLabel,
     };
   }
 
   return {
     isActive: false,
     status: 'expired',
-    label: 'Inactivo (prueba vencida)',
-    statusLabel: 'Período gratuito vencido',
-    detailText: `Los 30 días gratis finalizaron el ${formatShortDate(trialEndsAtDate.toISOString())}. Aboná $ 5.000 para reactivar tus publicaciones.`,
+    label: 'Inactivo (1° mes gratis vencido)',
+    statusLabel: 'Primer mes gratuito vencido',
+    detailText: `El primer mes gratis finalizó el ${formatShortDate(trialEndsAtDate.toISOString())}. Aboná ${formatCurrency(monthlyAmount)} para reactivar tus publicaciones.`,
     joinedAtIso,
     joinedAtDate,
     trialEndsAtDate,
     paidUntilDate,
     effectiveExpiresAt: trialEndsAtDate,
     daysRemaining: 0,
+    accountMonth,
+    currentMonthCost,
+    monthlyAmount,
+    tierLabel,
   };
 }

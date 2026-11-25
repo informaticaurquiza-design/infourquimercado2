@@ -497,9 +497,38 @@
       },
       "required": ["freeShippingThreshold", "standardShippingCost", "updatedBy", "updatedAt"]
     },
+    "AdminBillingSettings": {
+      "title": "AdminBillingSettings",
+      "description": "Administrator bank account details (Alias, CBU/CVU, Account Holder) exposed to authenticated users for monthly subscription transfers without leaking admin profile PII.",
+      "type": "object",
+      "properties": {
+        "bankAlias": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "bankCbuCvu": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "bankAccountHolder": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "updatedBy": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["bankAlias", "bankCbuCvu", "bankAccountHolder", "updatedBy", "updatedAt"]
+    },
     "SubscriptionPayment": {
       "title": "SubscriptionPayment",
-      "description": "Monthly $5000 seller account subscription payment record with cash or transfer receipt.",
+      "description": "Tiered monthly seller account subscription payment record (Month 1 free, Months 2-3 $5000, Month 4+ $10000) with cash or transfer receipt.",
       "type": "object",
       "properties": {
         "userId": {
@@ -762,11 +791,11 @@
     },
     "/settings/{settingId}": {
       "schema": { "$ref": "#/entities/StoreSettings" },
-      "description": "Storefront configuration such as shipping fee and free shipping threshold."
+      "description": "Storefront configuration documents: shipping policy ('shipping') and administrator billing bank details ('billing')."
     },
     "/subscriptionPayments/{paymentId}": {
       "schema": { "$ref": "#/entities/SubscriptionPayment" },
-      "description": "Monthly seller subscription payments ($5000) with cash reference or transfer receipt."
+      "description": "Tiered monthly seller subscription payments (Month 1 free, Months 2-3 $5000, Month 4+ $10000) with cash reference or transfer receipt."
     },
     "/deliveryAgents/{agentId}": {
       "schema": { "$ref": "#/entities/DeliveryAgent" },

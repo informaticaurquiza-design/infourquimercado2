@@ -1,13 +1,16 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertCircle,
   Banknote,
   Camera,
   CheckCircle2,
   Clock,
   Copy,
+  Edit3,
   FileCheck2,
   Landmark,
   Loader2,
+  Save,
   ScanText,
   Upload,
   X,
@@ -15,15 +18,21 @@ import {
 } from 'lucide-react';
 import { compressReceiptImage } from '../lib/imageTools';
 import {
-  MONTHLY_SUBSCRIPTION_COST,
+  MONTHLY_SUBSCRIPTION_COST_TIER_1,
+  MONTHLY_SUBSCRIPTION_COST_TIER_2,
   SELLER_TRIAL_NOTICE,
   formatCurrency,
   formatDateTime,
   formatShortDate,
   getAccountSubscriptionInfo,
 } from '../lib/validation';
-import { parseTransferReceipt, submitSubscriptionPayment } from '../services/dataService';
+import {
+  parseTransferReceipt,
+  submitSubscriptionPayment,
+  updateUserProfile,
+} from '../services/dataService';
 import type {
+  AdminBillingSettings,
   AppUser,
   PaymentReceipt,
   SubscriptionPayment,
@@ -36,6 +45,8 @@ interface SubscriptionPaymentPanelProps {
   profile: UserProfile | null;
   isAdmin: boolean;
   payments: SubscriptionPayment[];
+  adminBillingSettings: AdminBillingSettings | null;
+  onProfileSaved?: (updates: Partial<UserProfile>) => void;
   onNotifyToast: (msg: string) => void;
   onPaymentSubmitted?: () => void;
 }
@@ -45,6 +56,8 @@ export function SubscriptionPaymentPanel({
   profile,
   isAdmin,
   payments,
+  adminBillingSettings,
+  onProfileSaved,
   onNotifyToast,
   onPaymentSubmitted,
 }: SubscriptionPaymentPanelProps) {
@@ -67,6 +80,13 @@ export function SubscriptionPaymentPanel({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [viewingPayment, setViewingPayment] = useState<SubscriptionPayment | null>(null);
+
+  // Admin inline bank editor state
+  const [editingAdminBank, setEditingAdminBank] = useState(false);
+  const [adminBankHolder, setAdminBankHolder] = useState('');
+  const [adminBankAlias, setAdminBankAlias] = useState('');
+  const [adminBankCbu, setAdminBankCbu] = useState('');
+  const [savingAdminBank, setSavingAdminBank] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -92,6 +112,49 @@ export function SubscriptionPaymentPanel({
         : null;
     return getAccountSubscriptionInfo(effectiveProfile);
   }, [profile, isAdmin, user]);
+
+  // Administrator bank details come from settings/billing (automatically synced with the admin's profile).
+  // For the admin themselves, fall back immediately to their profile fields if settings/billing hasn't synced yet.
+  const adminBank = useMemo(() => {
+    const settingsAlias = (adminBillingSettings?.bankAlias || '').trim();
+    const settingsCbu = (adminBillingSettings?.bankCbuCvu || '').trim();
+    const settingsHolder = (adminBillingSettings?.bankAccountHolder || '').trim();
+    const hasSettings = Boolean(settingsAlias || settingsCbu || settingsHolder);
+
+    if (hasSettings) {
+      return {
+        bankAlias: settingsAlias,
+        bankCbuCvu: settingsCbu,
+        bankAccountHolder: settingsHolder,
+      };
+    }
+
+    if (isAdmin && profile) {
+      return {
+        bankAlias: (profile.bankAlias || '').trim(),
+        bankCbuCvu: (profile.bankCbuCvu || '').trim(),
+        bankAccountHolder: (profile.bankAccountHolder || '').trim(),
+      };
+    }
+
+    return {
+      bankAlias: '',
+      bankCbuCvu: '',
+      bankAccountHolder: '',
+    };
+  }, [adminBillingSettings, isAdmin, profile]);
+
+  const hasAdminBank = Boolean(
+    adminBank.bankAlias || adminBank.bankCbuCvu || adminBank.bankAccountHolder,
+  );
+
+  useEffect(() => {
+    if (!editingAdminBank) {
+      setAdminBankHolder(adminBank.bankAccountHolder);
+      setAdminBankAlias(adminBank.bankAlias);
+      setAdminBankCbu(adminBank.bankCbuCvu);
+    }
+  }, [adminBank, editingAdminBank]);
 
   const myPayments = useMemo(
     () => payments.filter((p) => p.userId === user.uid),
@@ -152,12 +215,35 @@ export function SubscriptionPaymentPanel({
     }
   }
 
-  async function handleCopyAlias() {
+  async function handleCopyText(label: string, value: string) {
+    if (!value) return;
     try {
-      await navigator.clipboard.writeText('INFOURQUI.MERCADO.COMERCIO');
-      onNotifyToast('Alias copiado al portapapeles.');
+      await navigator.clipboard.writeText(value);
+      onNotifyToast(`${label} copiado al portapapeles.`);
     } catch {
-      onNotifyToast('Alias: INFOURQUI.MERCADO.COMERCIO');
+      onNotifyToast(`${label}: ${value}`);
+    }
+  }
+
+  async function handleSaveAdminBank() {
+    if (!isAdmin) return;
+    setSavingAdminBank(true);
+    try {
+      const updates = {
+        bankAccountHolder: adminBankHolder.trim(),
+        bankAlias: adminBankAlias.trim(),
+        bankCbuCvu: adminBankCbu.trim(),
+      };
+      await updateUserProfile(user.uid, updates);
+      onProfileSaved?.(updates);
+      setEditingAdminBank(false);
+      onNotifyToast('Datos bancarios del administrador actualizados para el pago mensual.');
+    } catch (err) {
+      onNotifyToast(
+        err instanceof Error ? err.message : 'No pudimos guardar los datos bancarios.',
+      );
+    } finally {
+      setSavingAdminBank(false);
     }
   }
 
@@ -186,19 +272,22 @@ export function SubscriptionPaymentPanel({
           }
         : undefined;
 
+    const amountToSubmit = subInfo.monthlyAmount;
+
     setSubmitting(true);
     try {
       await submitSubscriptionPayment({
         user,
         profile,
         paymentMethod: method,
+        amount: amountToSubmit,
         note: note.trim(),
         paymentReceipt,
       });
       setNote('');
       clearReceipt();
       onNotifyToast(
-        'Pago mensual de $ 5.000 registrado. El administrador revisará tu comprobante para activar la cuenta.',
+        `Pago mensual de ${formatCurrency(amountToSubmit)} registrado. El administrador revisará tu comprobante para activar la cuenta.`,
       );
       onPaymentSubmitted?.();
     } catch (err) {
@@ -210,48 +299,133 @@ export function SubscriptionPaymentPanel({
     }
   }
 
+  const currentTierIdx = subInfo.accountMonth <= 1 ? 1 : subInfo.accountMonth <= 3 ? 2 : 3;
+
   return (
     <div className="space-y-6">
       {/* Account Status Banner */}
       <div
-        className={`rounded-xl border p-5 sm:p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4 ${
+        className={`rounded-xl border p-5 sm:p-6 space-y-5 ${
           subInfo.isActive
             ? 'bg-emerald-50/70 border-emerald-200'
             : 'bg-red-50/80 border-red-200'
         }`}
       >
-        <div className="space-y-1.5">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <span
-              className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                subInfo.isActive ? 'bg-emerald-600' : 'bg-red-600'
-              }`}
-            />
-            <h2
-              className={`font-display text-base font-bold ${
-                subInfo.isActive ? 'text-emerald-950' : 'text-red-950'
-              }`}
-            >
-              Estado de cuenta de vendedor: {subInfo.statusLabel}
-            </h2>
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span
+                className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                  subInfo.isActive ? 'bg-emerald-600' : 'bg-red-600'
+                }`}
+              />
+              <h2
+                className={`font-display text-base font-bold ${
+                  subInfo.isActive ? 'text-emerald-950' : 'text-red-950'
+                }`}
+              >
+                Estado de cuenta de vendedor: {subInfo.statusLabel}
+              </h2>
+            </div>
+            <p className={`text-xs ${subInfo.isActive ? 'text-emerald-900' : 'text-red-800'}`}>
+              {subInfo.detailText}
+            </p>
+            <p className="text-[11px] text-zinc-600 pt-0.5">{SELLER_TRIAL_NOTICE}</p>
           </div>
-          <p className={`text-xs ${subInfo.isActive ? 'text-emerald-900' : 'text-red-800'}`}>
-            {subInfo.detailText}
-          </p>
-          <p className="text-[11px] text-zinc-600 pt-1">{SELLER_TRIAL_NOTICE}</p>
+
+          <div className="flex flex-wrap items-center gap-5 shrink-0 border-t lg:border-t-0 pt-3 lg:pt-0 border-zinc-200/80">
+            <div>
+              <p className="text-[11px] text-zinc-500">Fecha de ingreso</p>
+              <p className="font-mono text-sm font-semibold text-zinc-950 tabular-nums">
+                {formatShortDate(subInfo.joinedAtIso)}
+              </p>
+            </div>
+            <div>
+              <p className="text-[11px] text-zinc-500">Mes de cuenta</p>
+              <p className="font-mono text-sm font-semibold text-zinc-950 tabular-nums">
+                Mes {subInfo.accountMonth}
+              </p>
+            </div>
+            <div>
+              <p className="text-[11px] text-zinc-500">Costo mes actual</p>
+              <p className="font-mono text-sm font-bold text-zinc-950 tabular-nums">
+                {isAdmin
+                  ? 'Sin cargo'
+                  : subInfo.currentMonthCost === 0
+                    ? 'Gratis'
+                    : formatCurrency(subInfo.currentMonthCost)}
+              </p>
+            </div>
+            <div>
+              <p className="text-[11px] text-zinc-500">Próximo abono</p>
+              <p className="font-mono text-sm font-bold text-blue-700 tabular-nums">
+                {formatCurrency(subInfo.monthlyAmount)}
+              </p>
+            </div>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-5 shrink-0 border-t lg:border-t-0 pt-3 lg:pt-0 border-zinc-200/80">
-          <div>
-            <p className="text-[11px] text-zinc-500">Fecha de ingreso</p>
-            <p className="font-mono text-sm font-semibold text-zinc-950 tabular-nums">
-              {formatShortDate(subInfo.joinedAtIso)}
+        {/* Tiered Monthly Pricing Schedule */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-4 border-t border-zinc-200/70">
+          <div
+            className={`rounded-lg border px-3.5 py-2.5 bg-white/90 ${
+              !isAdmin && currentTierIdx === 1
+                ? 'border-emerald-500 ring-1 ring-emerald-500/30'
+                : 'border-zinc-200'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-zinc-600">1° mes (días 1 a 30)</span>
+              {!isAdmin && currentTierIdx === 1 && (
+                <span className="text-[10px] font-semibold text-emerald-700 uppercase tracking-wide">
+                  Tu mes actual
+                </span>
+              )}
+            </div>
+            <p className="font-mono text-sm font-bold text-emerald-700 mt-0.5">Gratis ($ 0)</p>
+          </div>
+
+          <div
+            className={`rounded-lg border px-3.5 py-2.5 bg-white/90 ${
+              !isAdmin && currentTierIdx === 2
+                ? 'border-blue-600 ring-1 ring-blue-600/30'
+                : 'border-zinc-200'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-zinc-600">
+                2° y 3° mes (días 31 a 90)
+              </span>
+              {!isAdmin && currentTierIdx === 2 && (
+                <span className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide">
+                  Tu mes actual
+                </span>
+              )}
+            </div>
+            <p className="font-mono text-sm font-bold text-zinc-950 mt-0.5">
+              {formatCurrency(MONTHLY_SUBSCRIPTION_COST_TIER_1)} / mes
             </p>
           </div>
-          <div>
-            <p className="text-[11px] text-zinc-500">Abono mensual</p>
-            <p className="font-mono text-sm font-bold text-zinc-950 tabular-nums">
-              {formatCurrency(MONTHLY_SUBSCRIPTION_COST)}
+
+          <div
+            className={`rounded-lg border px-3.5 py-2.5 bg-white/90 ${
+              !isAdmin && currentTierIdx === 3
+                ? 'border-blue-600 ring-1 ring-blue-600/30'
+                : 'border-zinc-200'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-zinc-600">
+                A partir del 4° mes (día 91+)
+              </span>
+              {!isAdmin && currentTierIdx === 3 && (
+                <span className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide">
+                  Tu mes actual
+                </span>
+              )}
+            </div>
+            <p className="font-mono text-sm font-bold text-zinc-950 mt-0.5">
+              {formatCurrency(MONTHLY_SUBSCRIPTION_COST_TIER_2)} / mes
             </p>
           </div>
         </div>
@@ -269,11 +443,11 @@ export function SubscriptionPaymentPanel({
               Ingreso de pago mensual de la aplicación
             </h3>
             <p className="text-xs text-zinc-600 mt-1">
-              Abono mensual para mantener activas tus publicaciones de venta:{' '}
+              Importe correspondiente para tu próximo período de 30 días:{' '}
               <strong className="font-mono text-zinc-950">
-                {formatCurrency(MONTHLY_SUBSCRIPTION_COST)}
+                {formatCurrency(subInfo.monthlyAmount)}
               </strong>
-              . Seleccioná Efectivo o Transferencia bancaria con lectura automática de comprobante.
+              . Seleccioná Efectivo o Transferencia bancaria a la cuenta del administrador.
             </p>
           </div>
 
@@ -327,49 +501,170 @@ export function SubscriptionPaymentPanel({
               />
               <div>
                 <p className="text-xs font-semibold">Efectivo</p>
-                <p className="text-[11px] text-zinc-500">Pago presencial $ 5.000</p>
+                <p className="text-[11px] text-zinc-500">
+                  Pago presencial {formatCurrency(subInfo.monthlyAmount)}
+                </p>
               </div>
             </button>
           </div>
 
           {method === 'transfer' ? (
             <div className="space-y-4">
-              {/* Destination Account Info */}
-              <div className="p-4 rounded-xl bg-zinc-50 border border-zinc-200 space-y-2 text-xs">
-                <div className="flex items-center justify-between gap-2">
+              {/* Destination Account Info — Administrator's Bank Details */}
+              <div className="p-4 rounded-xl bg-zinc-50 border border-zinc-200 space-y-3 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-semibold text-zinc-900">
-                    Datos para transferir el abono mensual
+                    Datos bancarios del administrador para transferir el abono mensual
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => void handleCopyAlias()}
-                    className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 hover:underline cursor-pointer"
-                  >
-                    <Copy className="w-3 h-3" />
-                    Copiar alias
-                  </button>
+                  <div className="flex items-center gap-3">
+                    {adminBank.bankAlias && !editingAdminBank && (
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyText('Alias', adminBank.bankAlias)}
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 hover:underline cursor-pointer"
+                      >
+                        <Copy className="w-3 h-3" />
+                        Copiar alias
+                      </button>
+                    )}
+                    {adminBank.bankCbuCvu && !editingAdminBank && (
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyText('CBU/CVU', adminBank.bankCbuCvu)}
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 hover:underline cursor-pointer"
+                      >
+                        <Copy className="w-3 h-3" />
+                        Copiar CBU/CVU
+                      </button>
+                    )}
+                    {isAdmin && !editingAdminBank && (
+                      <button
+                        type="button"
+                        onClick={() => setEditingAdminBank(true)}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-zinc-700 hover:text-zinc-950 cursor-pointer"
+                      >
+                        <Edit3 className="w-3 h-3" />
+                        {hasAdminBank ? 'Editar datos' : 'Cargar datos'}
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-zinc-700">
-                  <p>
-                    <span className="text-zinc-500">Alias:</span>{' '}
-                    <span className="font-mono font-medium text-zinc-950">
-                      INFOURQUI.MERCADO.COMERCIO
-                    </span>
-                  </p>
-                  <p>
-                    <span className="text-zinc-500">CBU:</span>{' '}
-                    <span className="font-mono text-zinc-950">0170099940000018472910</span>
-                  </p>
-                  <p>
-                    <span className="text-zinc-500">Titular:</span> Infourqui Mercado S.A.
-                  </p>
-                  <p>
-                    <span className="text-zinc-500">Importe:</span>{' '}
-                    <span className="font-mono font-bold text-zinc-950">
-                      {formatCurrency(MONTHLY_SUBSCRIPTION_COST)}
-                    </span>
-                  </p>
-                </div>
+
+                {editingAdminBank && isAdmin ? (
+                  <div className="space-y-3 pt-1 border-t border-zinc-200">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] font-medium text-zinc-600 mb-1">
+                          Titular de la cuenta bancaria
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={120}
+                          value={adminBankHolder}
+                          onChange={(e) => setAdminBankHolder(e.target.value)}
+                          placeholder="Nombre completo o razón social"
+                          className="w-full px-2.5 py-1.5 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-medium text-zinc-600 mb-1">
+                          Alias
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={60}
+                          value={adminBankAlias}
+                          onChange={(e) => setAdminBankAlias(e.target.value)}
+                          placeholder="Ej. mi.alias.banco"
+                          className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-medium text-zinc-600 mb-1">
+                          CBU / CVU
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={32}
+                          value={adminBankCbu}
+                          onChange={(e) => setAdminBankCbu(e.target.value)}
+                          placeholder="22 dígitos"
+                          className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingAdminBank(false);
+                          setAdminBankHolder(adminBank.bankAccountHolder);
+                          setAdminBankAlias(adminBank.bankAlias);
+                          setAdminBankCbu(adminBank.bankCbuCvu);
+                        }}
+                        className="px-3 py-1.5 text-[11px] font-medium text-zinc-600 bg-white border border-zinc-300 hover:bg-zinc-100 rounded-lg cursor-pointer"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        disabled={savingAdminBank}
+                        onClick={() => void handleSaveAdminBank()}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-white bg-zinc-950 hover:bg-blue-700 disabled:opacity-60 rounded-lg cursor-pointer"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        {savingAdminBank ? 'Guardando...' : 'Guardar datos bancarios'}
+                      </button>
+                    </div>
+                  </div>
+                ) : hasAdminBank ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-zinc-700">
+                    {adminBank.bankAlias && (
+                      <p>
+                        <span className="text-zinc-500">Alias:</span>{' '}
+                        <span className="font-mono font-medium text-zinc-950 break-all">
+                          {adminBank.bankAlias}
+                        </span>
+                      </p>
+                    )}
+                    {adminBank.bankCbuCvu && (
+                      <p>
+                        <span className="text-zinc-500">CBU / CVU:</span>{' '}
+                        <span className="font-mono text-zinc-950 break-all">
+                          {adminBank.bankCbuCvu}
+                        </span>
+                      </p>
+                    )}
+                    {adminBank.bankAccountHolder && (
+                      <p>
+                        <span className="text-zinc-500">Titular:</span>{' '}
+                        <span className="font-medium text-zinc-950">
+                          {adminBank.bankAccountHolder}
+                        </span>
+                      </p>
+                    )}
+                    <p>
+                      <span className="text-zinc-500">Importe:</span>{' '}
+                      <span className="font-mono font-bold text-zinc-950">
+                        {formatCurrency(subInfo.monthlyAmount)}
+                      </span>
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex items-start gap-2.5 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-700" />
+                    <div className="space-y-1">
+                      <p className="font-semibold">
+                        Datos bancarios del administrador pendientes de carga
+                      </p>
+                      <p className="text-[11px] leading-relaxed">
+                        {isAdmin
+                          ? 'Cargá tu Titular, Alias y CBU/CVU desde "Cargar datos" o desde Mi cuenta para que los vendedores los vean al realizar el pago mensual.'
+                          : 'El administrador todavía no cargó sus datos bancarios para transferencias. Podés abonar en Efectivo o consultar con la administración.'}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Receipt Upload / Camera Controls */}
@@ -516,7 +811,7 @@ export function SubscriptionPaymentPanel({
                           maxLength={40}
                           value={receiptAmount}
                           onChange={(e) => setReceiptAmount(e.target.value)}
-                          placeholder="$ 5.000,00"
+                          placeholder={formatCurrency(subInfo.monthlyAmount)}
                           className="w-full px-2.5 py-1.5 text-xs font-mono border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
                         />
                       </div>
@@ -555,7 +850,11 @@ export function SubscriptionPaymentPanel({
                           maxLength={100}
                           value={receiptDest}
                           onChange={(e) => setReceiptDest(e.target.value)}
-                          placeholder="INFOURQUI.MERCADO.COMERCIO"
+                          placeholder={
+                            adminBank.bankAlias ||
+                            adminBank.bankCbuCvu ||
+                            'Alias o CBU/CVU del administrador'
+                          }
                           className="w-full px-2.5 py-1.5 text-xs border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
                         />
                       </div>
@@ -573,7 +872,9 @@ export function SubscriptionPaymentPanel({
             </div>
           ) : (
             <div className="p-4 rounded-xl bg-zinc-50 border border-zinc-200 space-y-2 text-xs text-zinc-700">
-              <p className="font-semibold text-zinc-950">Pago mensual en efectivo — $ 5.000</p>
+              <p className="font-semibold text-zinc-950">
+                Pago mensual en efectivo — {formatCurrency(subInfo.monthlyAmount)}
+              </p>
               <p className="leading-relaxed">
                 Al registrar tu pago en efectivo, el administrador recibirá el aviso en el módulo de
                 Cuentas para confirmar la recepción del monto y activar tus publicaciones por 30 días.
@@ -606,7 +907,7 @@ export function SubscriptionPaymentPanel({
           >
             {submitting
               ? 'Registrando pago...'
-              : `Registrar pago mensual (${formatCurrency(MONTHLY_SUBSCRIPTION_COST)})`}
+              : `Registrar pago mensual (${formatCurrency(subInfo.monthlyAmount)})`}
           </button>
         </form>
 

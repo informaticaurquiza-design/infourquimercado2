@@ -66,6 +66,7 @@ import {
 import {
   CATEGORIES,
   SHIPMENT_PIPELINE,
+  type AdminBillingSettings,
   type AdminTab,
   type AppUser,
   type CategoryDefinition,
@@ -101,6 +102,7 @@ interface AdminDashboardViewProps {
   benefits: CustomerBenefit[];
   subscriptionPayments: SubscriptionPayment[];
   shippingSettings: StoreSettings;
+  adminBillingSettings: AdminBillingSettings | null;
   onRequireSignIn: () => void;
   onProfileSaved?: (updates: Partial<UserProfile>) => void;
   onNotifyToast: (msg: string) => void;
@@ -152,6 +154,7 @@ export function AdminDashboardView({
   benefits,
   subscriptionPayments,
   shippingSettings,
+  adminBillingSettings,
   onRequireSignIn,
   onProfileSaved,
   onNotifyToast,
@@ -1180,7 +1183,7 @@ export function AdminDashboardView({
                 <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
                 <div className="space-y-1 text-xs">
                   <p className="font-bold text-red-950">
-                    Publicaciones pausadas — Período gratuito de 30 días vencido
+                    Publicaciones pausadas — {sellerSubInfo.statusLabel}
                   </p>
                   <p className="text-red-800 leading-relaxed">{SELLER_TRIAL_NOTICE}</p>
                   <p className="text-red-700">
@@ -1195,7 +1198,7 @@ export function AdminDashboardView({
                 className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
               >
                 <CreditCard className="w-4 h-4" />
-                Ingresar pago mensual ($ 5.000)
+                Ingresar pago mensual ({formatCurrency(sellerSubInfo.monthlyAmount)})
               </button>
             </div>
           )}
@@ -1917,6 +1920,8 @@ export function AdminDashboardView({
           profile={profile}
           isAdmin={isAdmin}
           payments={subscriptionPayments}
+          adminBillingSettings={adminBillingSettings}
+          onProfileSaved={onProfileSaved}
           onNotifyToast={onNotifyToast}
         />
       )}

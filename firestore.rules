@@ -357,6 +357,16 @@ service cloud.firestore {
       && data.updatedAt is timestamp;
     }
 
+    function isValidBillingSettings(data) {
+      return data.keys().hasAll(['bankAlias', 'bankCbuCvu', 'bankAccountHolder', 'updatedBy', 'updatedAt'])
+      && data.keys().hasOnly(['bankAlias', 'bankCbuCvu', 'bankAccountHolder', 'updatedBy', 'updatedAt'])
+      && data.bankAlias is string && data.bankAlias.size() <= 60
+      && data.bankCbuCvu is string && data.bankCbuCvu.size() <= 32
+      && data.bankAccountHolder is string && data.bankAccountHolder.size() <= 120
+      && isValidId(data.updatedBy)
+      && data.updatedAt is timestamp;
+    }
+
     function isValidCategory(data) {
       return data.keys().hasAll([
         'label', 'shortLabel', 'description', 'active', 'sortOrder', 'createdAt', 'updatedAt'
@@ -601,20 +611,27 @@ service cloud.firestore {
 
     // --- Collection: settings ---
     match /settings/{settingId} {
-      allow get: if isValidId(settingId) && settingId == 'shipping';
+      allow get: if isValidId(settingId) && (
+        settingId == 'shipping'
+        || (settingId == 'billing' && isSignedIn())
+      );
       allow list: if false;
       allow create: if isValidId(settingId)
-        && settingId == 'shipping'
-        && isValidStoreSettings(incoming())
+        && isAdmin()
         && incoming().updatedBy == request.auth.uid
         && incoming().updatedAt == request.time
-        && isAdmin();
+        && (
+          (settingId == 'shipping' && isValidStoreSettings(incoming()))
+          || (settingId == 'billing' && isValidBillingSettings(incoming()))
+        );
       allow update: if isValidId(settingId)
-        && settingId == 'shipping'
-        && isValidStoreSettings(incoming())
+        && isAdmin()
         && incoming().updatedBy == request.auth.uid
         && incoming().updatedAt == request.time
-        && isAdmin();
+        && (
+          (settingId == 'shipping' && isValidStoreSettings(incoming()))
+          || (settingId == 'billing' && isValidBillingSettings(incoming()))
+        );
       allow delete: if isValidId(settingId) && isAdmin();
     }
 
