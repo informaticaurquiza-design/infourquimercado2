@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  SESSION_IDLE_TIMEOUT_MS,
   buildLocalBackupObject,
   deleteLocalBackupSnapshot,
   getDbRelativeDisplay,
@@ -245,16 +246,18 @@ function extractBearerToken(req: Request): string | null {
   return header.slice(7).trim() || null;
 }
 
-function getAuthSession(req: Request): SessionPayload | null {
+function getAuthSession(req: Request, options?: { touch?: boolean }): SessionPayload | null {
   const token = extractBearerToken(req);
   if (!token) return null;
-  return verifySessionToken(token);
+  return verifySessionToken(token, options);
 }
 
 function requireAuth(req: Request, res: Response): SessionPayload | null {
   const session = getAuthSession(req);
   if (!session) {
-    res.status(401).json({ error: 'Iniciá sesión en el servidor local para realizar esta acción.' });
+    res.status(401).json({
+      error: 'Tu sesión venció por inactividad o no está iniciada. Volvé a iniciar sesión.',
+    });
     return null;
   }
   return session;
@@ -669,6 +672,12 @@ app.get('/api/local/auth/me', (req, res) => {
   });
 });
 
+app.post('/api/local/auth/touch', (req, res) => {
+  const session = requireAuth(req, res);
+  if (!session) return;
+  res.json({ ok: true, idleTimeoutMs: SESSION_IDLE_TIMEOUT_MS });
+});
+
 app.post('/api/local/auth/logout', (req, res) => {
   const token = extractBearerToken(req);
   if (token) {
@@ -929,7 +938,7 @@ app.post('/api/local/auth/confirm-password-reset', async (req, res) => {
 
 app.get('/api/local/bootstrap', (req, res) => {
   const db = loadLocalDb();
-  const session = getAuthSession(req);
+  const session = getAuthSession(req, { touch: false });
   const isAdmin = session?.role === 'admin';
   const usersById = new Map(db.users.map((u) => [u.uid, u]));
 

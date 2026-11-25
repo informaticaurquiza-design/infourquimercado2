@@ -62,7 +62,6 @@ export function CheckoutModal({
   user,
   profile,
   onRequireSignIn,
-  onOpenAccount,
   onOrderSuccess,
   onTrackOrder,
 }: CheckoutModalProps) {
@@ -995,12 +994,14 @@ export function CheckoutModal({
                           <span className="text-xs font-semibold text-emerald-700">
                             5% de descuento adicional por transferencia
                           </span>
-                          <span className="text-[11px] font-medium text-zinc-500">
-                            Datos bancarios de destino
-                          </span>
+                          {transferAccounts.length > 0 && (
+                            <span className="text-[11px] font-medium text-zinc-500">
+                              Datos bancarios de destino
+                            </span>
+                          )}
                         </div>
 
-                        {transferAccounts.length > 0 ? (
+                        {transferAccounts.length > 0 && (
                           <div className="space-y-2.5">
                             {transferAccounts.map((acc, idx) => (
                               <div
@@ -1060,30 +1061,6 @@ export function CheckoutModal({
                                 </div>
                               </div>
                             ))}
-                          </div>
-                        ) : (
-                          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
-                            <p className="text-xs font-semibold text-amber-900">
-                              No hay datos bancarios cargados todavía
-                            </p>
-                            <p className="text-[11px] text-amber-800 leading-relaxed">
-                              El Alias, CBU/CVU y Nombre de la cuenta se toman de la sección{' '}
-                              <span className="font-semibold">Datos Bancarios</span> de la cuenta del
-                              cliente.
-                            </p>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (onOpenAccount) {
-                                  onOpenAccount();
-                                } else {
-                                  onRequireSignIn();
-                                }
-                              }}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-950 bg-white border border-amber-300 hover:border-amber-600 rounded-lg transition-colors cursor-pointer"
-                            >
-                              Cargar datos bancarios en Mi cuenta
-                            </button>
                           </div>
                         )}
                       </div>

@@ -38,6 +38,7 @@ export interface SessionPayload {
   uid: string;
   email: string;
   role: 'customer' | 'admin';
+  iat: number;
   exp: number;
   jti: string;
 }
@@ -58,8 +59,24 @@ if (!BACKUPS_DIR.startsWith(DATA_DIR + path.sep)) {
 
 const SIGNING_SECRET =
   process.env.LOCAL_AUTH_SECRET?.trim() || crypto.randomBytes(32).toString('hex');
-const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 días
-const revokedTokens = new Set<string>();
+export const SESSION_IDLE_TIMEOUT_MS = 1000 * 60 * 60; // 1 hora de inactividad
+const SESSION_MAX_LIFETIME_MS = 1000 * 60 * 60 * 12; // 12 horas máximo absoluto
+const revokedTokens = new Map<string, number>();
+const sessionLastActivity = new Map<string, number>();
+
+function pruneExpiredSessions(now: number): void {
+  for (const [jti, lastActive] of sessionLastActivity.entries()) {
+    if (now - lastActive >= SESSION_IDLE_TIMEOUT_MS) {
+      sessionLastActivity.delete(jti);
+      revokedTokens.set(jti, now + SESSION_MAX_LIFETIME_MS);
+    }
+  }
+  for (const [jti, exp] of revokedTokens.entries()) {
+    if (exp <= now) {
+      revokedTokens.delete(jti);
+    }
+  }
+}
 
 let writeQueue: Promise<void> = Promise.resolve();
 let dbCache: LocalDatabaseSchema | null = null;
@@ -264,13 +281,17 @@ export function signSessionToken(user: {
   email: string;
   role: 'customer' | 'admin';
 }): string {
+  const now = Date.now();
+  pruneExpiredSessions(now);
   const payload: SessionPayload = {
     uid: user.uid,
     email: user.email,
     role: user.role,
-    exp: Date.now() + SESSION_TTL_MS,
+    iat: now,
+    exp: now + SESSION_MAX_LIFETIME_MS,
     jti: crypto.randomBytes(12).toString('hex'),
   };
+  sessionLastActivity.set(payload.jti, now);
   const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
   const sig = crypto
     .createHmac('sha256', SIGNING_SECRET)
@@ -279,7 +300,10 @@ export function signSessionToken(user: {
   return `${encoded}.${sig}`;
 }
 
-export function verifySessionToken(token: string): SessionPayload | null {
+export function verifySessionToken(
+  token: string,
+  options?: { touch?: boolean },
+): SessionPayload | null {
   if (!token || typeof token !== 'string') return null;
   const parts = token.split('.');
   if (parts.length !== 2) return null;
@@ -298,12 +322,23 @@ export function verifySessionToken(token: string): SessionPayload | null {
   }
 
   try {
+    const now = Date.now();
     const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as SessionPayload;
-    if (!payload || !payload.uid || !payload.exp || payload.exp < Date.now()) {
+    if (!payload || !payload.uid || !payload.jti || !payload.exp || payload.exp < now) {
       return null;
     }
     if (revokedTokens.has(payload.jti)) {
       return null;
+    }
+    const lastActive = sessionLastActivity.get(payload.jti);
+    const referenceTime = typeof lastActive === 'number' ? lastActive : payload.iat || 0;
+    if (!referenceTime || now - referenceTime >= SESSION_IDLE_TIMEOUT_MS) {
+      revokedTokens.set(payload.jti, payload.exp);
+      sessionLastActivity.delete(payload.jti);
+      return null;
+    }
+    if (options?.touch !== false) {
+      sessionLastActivity.set(payload.jti, now);
     }
     return payload;
   } catch {
@@ -312,9 +347,10 @@ export function verifySessionToken(token: string): SessionPayload | null {
 }
 
 export function revokeSessionToken(token: string): void {
-  const parsed = verifySessionToken(token);
+  const parsed = verifySessionToken(token, { touch: false });
   if (parsed?.jti) {
-    revokedTokens.add(parsed.jti);
+    revokedTokens.set(parsed.jti, parsed.exp);
+    sessionLastActivity.delete(parsed.jti);
   }
 }
 

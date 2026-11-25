@@ -164,11 +164,24 @@ export async function localAdminCreateCustomer(input: {
   return res.account;
 }
 
+export async function touchLocalSession(): Promise<boolean> {
+  if (!memoryAuthToken) return false;
+  try {
+    await apiRequest<{ ok: boolean }>('/api/local/auth/touch', { method: 'POST' });
+    return true;
+  } catch {
+    setLocalAuthToken(null);
+    return false;
+  }
+}
+
 export async function logoutLocalAccount(): Promise<void> {
   try {
     if (memoryAuthToken) {
       await apiRequest<{ ok: boolean }>('/api/local/auth/logout', { method: 'POST' });
     }
+  } catch {
+    // ignore expired/offline errors during logout
   } finally {
     setLocalAuthToken(null);
   }

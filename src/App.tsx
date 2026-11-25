@@ -61,6 +61,7 @@ import {
   registerLocalCustomer,
   setLocalAuthToken,
   setupLocalAdmin,
+  touchLocalSession,
 } from './services/localApiService';
 import {
   CATEGORIES,
@@ -82,6 +83,36 @@ import {
 } from './types/ecommerce';
 
 const DB_MODE_STORAGE_KEY = 'alba_db_mode';
+const SESSION_IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 1 hora de inactividad
+const SESSION_ACTIVITY_STORAGE_KEY = 'infourqui_session_last_activity';
+const LOCAL_SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000; // Sincronizar actividad cada 5 min
+
+function readLastSessionActivity(): number | null {
+  try {
+    const raw = window.localStorage.getItem(SESSION_ACTIVITY_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLastSessionActivity(timestamp = Date.now()): void {
+  try {
+    window.localStorage.setItem(SESSION_ACTIVITY_STORAGE_KEY, String(timestamp));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function clearLastSessionActivity(): void {
+  try {
+    window.localStorage.removeItem(SESSION_ACTIVITY_STORAGE_KEY);
+  } catch {
+    // ignore storage errors
+  }
+}
 
 function isLocalOrLanHostname(hostname: string): boolean {
   const host = hostname.trim().toLowerCase().replace(/^\[|\]$/g, '');
@@ -998,6 +1029,154 @@ function AppContent() {
     () => (dbMode === 'local' ? localUser : toAppUserFromFirebase(cloudUser)),
     [dbMode, localUser, cloudUser],
   );
+  const idleExpiringRef = useRef(false);
+
+  // Automatic 1-hour inactivity session expiration (Cloud + PC Local / LAN)
+  useEffect(() => {
+    if (!activeUser) {
+      idleExpiringRef.current = false;
+      return;
+    }
+
+    let timeoutId: number | null = null;
+    let lastLocalTouchAt = 0;
+    let lastActivityThrottleAt = 0;
+
+    const triggerIdleExpiration = async () => {
+      if (idleExpiringRef.current) return;
+      idleExpiringRef.current = true;
+      clearLastSessionActivity();
+      setCheckoutOpen(false);
+      setAccountOpen(false);
+      setCartOpen(false);
+      setActiveView((curr) => (curr === 'admin' ? 'catalog' : curr));
+
+      try {
+        if (dbMode === 'local') {
+          await logoutLocalAccount();
+          setLocalUser(null);
+          setLocalProfile(null);
+          setLocalIsAdmin(false);
+          setLocalOrders([]);
+          setLocalAccounts([]);
+          setLocalDeliveryAgents([]);
+          setLocalSubscriptionPayments([]);
+          setLocalNotifications([]);
+          await loadLocalData();
+        } else {
+          await signOut(auth);
+        }
+      } catch {
+        // ignore errors during forced idle sign-out
+      } finally {
+        showToast('Tu sesión venció automáticamente tras 1 hora de inactividad.');
+      }
+    };
+
+    const scheduleExpirationCheck = () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      const lastActive = readLastSessionActivity() ?? Date.now();
+      const elapsed = Date.now() - lastActive;
+      const remaining = SESSION_IDLE_TIMEOUT_MS - elapsed;
+      if (remaining <= 0) {
+        void triggerIdleExpiration();
+        return;
+      }
+      timeoutId = window.setTimeout(() => {
+        const latest = readLastSessionActivity() ?? lastActive;
+        if (Date.now() - latest >= SESSION_IDLE_TIMEOUT_MS) {
+          void triggerIdleExpiration();
+        } else {
+          scheduleExpirationCheck();
+        }
+      }, remaining);
+    };
+
+    // Check immediately on mount / session restore (e.g. tab reopened after > 1 hour away)
+    const initialStored = readLastSessionActivity();
+    if (initialStored !== null && Date.now() - initialStored >= SESSION_IDLE_TIMEOUT_MS) {
+      void triggerIdleExpiration();
+      return;
+    }
+    if (initialStored === null) {
+      writeLastSessionActivity(Date.now());
+    }
+    scheduleExpirationCheck();
+
+    const recordUserActivity = () => {
+      if (idleExpiringRef.current) return;
+      const now = Date.now();
+      if (now - lastActivityThrottleAt < 15_000) return;
+      lastActivityThrottleAt = now;
+
+      const prevStored = readLastSessionActivity();
+      if (prevStored !== null && now - prevStored >= SESSION_IDLE_TIMEOUT_MS) {
+        void triggerIdleExpiration();
+        return;
+      }
+
+      writeLastSessionActivity(now);
+      scheduleExpirationCheck();
+
+      if (dbMode === 'local' && now - lastLocalTouchAt >= LOCAL_SESSION_TOUCH_INTERVAL_MS) {
+        lastLocalTouchAt = now;
+        void touchLocalSession().then((ok) => {
+          if (!ok && !idleExpiringRef.current) {
+            void triggerIdleExpiration();
+          }
+        });
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      const latest = readLastSessionActivity();
+      if (latest !== null && Date.now() - latest >= SESSION_IDLE_TIMEOUT_MS) {
+        void triggerIdleExpiration();
+      } else {
+        scheduleExpirationCheck();
+      }
+    };
+
+    const handleStorageSync = (e: StorageEvent) => {
+      if (e.key !== SESSION_ACTIVITY_STORAGE_KEY) return;
+      scheduleExpirationCheck();
+    };
+
+    const activityEvents: Array<keyof WindowEventMap> = [
+      'pointerdown',
+      'keydown',
+      'wheel',
+      'touchstart',
+      'scroll',
+      'mousemove',
+    ];
+    activityEvents.forEach((evt) => {
+      window.addEventListener(evt, recordUserActivity, { passive: true });
+    });
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('storage', handleStorageSync);
+
+    const intervalId = window.setInterval(() => {
+      const latest = readLastSessionActivity();
+      if (latest !== null && Date.now() - latest >= SESSION_IDLE_TIMEOUT_MS) {
+        void triggerIdleExpiration();
+      }
+    }, 30_000);
+
+    return () => {
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      window.clearInterval(intervalId);
+      activityEvents.forEach((evt) => {
+        window.removeEventListener(evt, recordUserActivity);
+      });
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('storage', handleStorageSync);
+    };
+  }, [activeUser?.uid, dbMode, loadLocalData, showToast]);
   const activeProfile = dbMode === 'local' ? localProfile : cloudProfile;
   const activeIsAdmin = dbMode === 'local' ? localIsAdmin : cloudIsAdmin;
   const activeProducts = dbMode === 'local' ? localProducts : cloudProducts;
@@ -1114,6 +1293,7 @@ function AppContent() {
     bankAlias?: string;
     bankAccountHolder?: string;
   }): Promise<{ switchedToLocal?: boolean; unauthorizedDomain?: string }> {
+    writeLastSessionActivity(Date.now());
     let credential;
     try {
       credential = await signInWithPopup(auth, googleProvider);
@@ -1184,6 +1364,7 @@ function AppContent() {
       setCloudAuthReady(true);
     }
 
+    writeLastSessionActivity(Date.now());
     showToast(
       optionalSignupData?.isRegister
         ? 'Cuenta creada con Google e iniciada correctamente.'
@@ -1211,6 +1392,7 @@ function AppContent() {
     setLocalUser(res.user);
     setLocalProfile(res.profile);
     setLocalIsAdmin(res.isAdmin);
+    writeLastSessionActivity(Date.now());
     await Promise.all([loadLocalData(), refreshLocalServerInfo()]);
     showToast('Cuenta administradora local creada y sesión iniciada.');
   }
@@ -1244,6 +1426,7 @@ function AppContent() {
       setLocalUser(res.user);
       setLocalProfile(res.profile);
       setLocalIsAdmin(res.isAdmin);
+      writeLastSessionActivity(Date.now());
       await loadLocalData();
       showToast('Sesión local iniciada correctamente.');
       return {};
@@ -1252,6 +1435,7 @@ function AppContent() {
     // Fallback when running without the local PC server (e.g. static web deploy):
     // authenticate via Firebase Email/Password so users can still sign in with email + password.
     try {
+      writeLastSessionActivity(Date.now());
       const cleanEmail = input.email.trim();
       const credential = await signInWithEmailAndPassword(auth, cleanEmail, input.password);
       if (!credential.user.emailVerified) {
@@ -1284,6 +1468,7 @@ function AppContent() {
       setCloudIsAdmin(adminFlag);
       setCloudProfile(ensured);
       setCloudAuthReady(true);
+      writeLastSessionActivity(Date.now());
       showToast('Sesión iniciada correctamente.');
       return {};
     } catch (err) {
@@ -1325,6 +1510,7 @@ function AppContent() {
       setLocalUser(res.user);
       setLocalProfile(res.profile);
       setLocalIsAdmin(res.isAdmin);
+      writeLastSessionActivity(Date.now());
       await Promise.all([loadLocalData(), refreshLocalServerInfo()]);
       showToast('Cuenta local registrada e iniciada.');
       return {};
@@ -1394,6 +1580,7 @@ function AppContent() {
   }
 
   async function handleSignOut() {
+    clearLastSessionActivity();
     if (dbMode === 'local') {
       await logoutLocalAccount();
       setLocalUser(null);
