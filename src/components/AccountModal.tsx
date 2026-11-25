@@ -29,12 +29,7 @@ import {
   changeAccountPassword,
   updateUserProfile,
 } from '../services/dataService';
-import type {
-  AppUser,
-  DatabaseMode,
-  LocalServerInfo,
-  UserProfile,
-} from '../types/ecommerce';
+import type { AppUser, UserProfile } from '../types/ecommerce';
 
 interface CloudSignupProfileInput {
   isRegister?: boolean;
@@ -46,7 +41,7 @@ interface CloudSignupProfileInput {
   bankAccountHolder?: string;
 }
 
-interface LocalAuthActionResult {
+interface EmailAuthActionResult {
   emailPasswordDisabled?: boolean;
   verificationSent?: boolean;
   emailNotVerified?: boolean;
@@ -56,28 +51,18 @@ interface LocalAuthActionResult {
 interface AccountModalProps {
   open: boolean;
   onClose: () => void;
-  dbMode: DatabaseMode;
-  onChangeDbMode: (mode: DatabaseMode) => void;
-  localServerInfo: LocalServerInfo | null;
-  onRefreshLocalServerInfo?: () => Promise<void>;
   user: AppUser | null;
   profile: UserProfile | null;
   isAdmin: boolean;
   onSignInGoogle: (
     optionalSignupData?: CloudSignupProfileInput,
-  ) => Promise<{ switchedToLocal?: boolean; unauthorizedDomain?: string } | void>;
-  onSetupLocalAdmin: (input: {
-    email: string;
-    displayName: string;
-    businessName?: string;
-    password: string;
-  }) => Promise<void>;
-  onLoginLocal: (input: {
+  ) => Promise<{ unauthorizedDomain?: string } | void>;
+  onLoginEmail: (input: {
     email: string;
     password: string;
     resendVerification?: boolean;
-  }) => Promise<LocalAuthActionResult | void>;
-  onRegisterLocal: (input: {
+  }) => Promise<EmailAuthActionResult | void>;
+  onRegisterEmail: (input: {
     email: string;
     displayName: string;
     businessName?: string;
@@ -86,16 +71,10 @@ interface AccountModalProps {
     bankAlias?: string;
     bankAccountHolder?: string;
     password: string;
-  }) => Promise<LocalAuthActionResult | void>;
+  }) => Promise<EmailAuthActionResult | void>;
   onRequestPasswordReset: (input: {
     email: string;
-    channel: 'local' | 'cloud';
-  }) => Promise<{ mode?: 'local' | 'cloud'; email?: string; emailPasswordDisabled?: boolean }>;
-  onConfirmLocalPasswordReset: (input: {
-    email: string;
-    code: string;
-    newPassword: string;
-  }) => Promise<void>;
+  }) => Promise<{ email?: string; emailPasswordDisabled?: boolean }>;
   onProfileSaved?: (updates: Partial<UserProfile>) => void;
   onSignOut: () => Promise<void>;
   pushPermission: PushPermissionState;
@@ -129,19 +108,13 @@ function GoogleMark() {
 export function AccountModal({
   open,
   onClose,
-  dbMode,
-  onChangeDbMode,
-  localServerInfo,
-  onRefreshLocalServerInfo,
   user,
   profile,
   isAdmin,
   onSignInGoogle,
-  onSetupLocalAdmin,
-  onLoginLocal,
-  onRegisterLocal,
+  onLoginEmail,
+  onRegisterEmail,
   onRequestPasswordReset,
-  onConfirmLocalPasswordReset,
   onProfileSaved,
   onSignOut,
   pushPermission,
@@ -159,15 +132,9 @@ export function AccountModal({
   const [bankAccountHolder, setBankAccountHolder] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const localAvailable = Boolean(localServerInfo?.available);
-  const needsAdminSetup =
-    localAvailable &&
-    !localServerInfo?.envAdminConfigured &&
-    !localServerInfo?.adminClaimed;
-
-  // Unified Auth Navigation: Ingresar / Crear cuenta / Recuperar (+ Configurar Admin on first local run)
-  const [authTab, setAuthTab] = useState<'login' | 'register' | 'setup' | 'recover'>('login');
-  const [authMethod, setAuthMethod] = useState<'local' | 'google'>('local');
+  // Auth navigation: Ingresar / Crear cuenta / Recuperar
+  const [authTab, setAuthTab] = useState<'login' | 'register' | 'recover'>('login');
+  const [authMethod, setAuthMethod] = useState<'google' | 'email'>('google');
 
   // Shared login / signup fields
   const [authEmail, setAuthEmail] = useState('');
@@ -180,13 +147,9 @@ export function AccountModal({
   const [signupBankHolder, setSignupBankHolder] = useState('');
   const [showBankSection, setShowBankSection] = useState(false);
 
-  // Password recovery state
-  const [recoverChannel, setRecoverChannel] = useState<'local' | 'cloud'>('cloud');
-  const [recoverStep, setRecoverStep] = useState<'request' | 'confirm_local' | 'sent_cloud'>('request');
+  // Password recovery state (Firebase Auth email reset)
+  const [recoverStep, setRecoverStep] = useState<'request' | 'sent'>('request');
   const [recoverEmail, setRecoverEmail] = useState('');
-  const [recoverCode, setRecoverCode] = useState('');
-  const [recoverNewPassword, setRecoverNewPassword] = useState('');
-  const [recoverConfirmPassword, setRecoverConfirmPassword] = useState('');
 
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
@@ -207,18 +170,6 @@ export function AccountModal({
   const [passwordSuccess, setPasswordSuccess] = useState('');
 
   useEffect(() => {
-    if (!open || !localAvailable) return;
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.ctrlKey && !e.altKey && !e.metaKey && e.key === 'F10') {
-        e.preventDefault();
-        onChangeDbMode(dbMode === 'local' ? 'cloud' : 'local');
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [open, localAvailable, dbMode, onChangeDbMode]);
-
-  useEffect(() => {
     if (open) {
       setAuthError('');
       setAuthNotice('');
@@ -235,43 +186,19 @@ export function AccountModal({
       setSignupBankAlias('');
       setSignupBankHolder('');
       setShowBankSection(false);
-      setRecoverChannel(localAvailable ? 'local' : 'cloud');
       setRecoverStep('request');
       setRecoverEmail('');
-      setRecoverCode('');
-      setRecoverNewPassword('');
-      setRecoverConfirmPassword('');
       setShowPasswordSection(false);
       setCurrentPassword('');
       setNewPassword('');
       setConfirmNewPassword('');
       setPasswordError('');
       setPasswordSuccess('');
-
-      if (!localAvailable && onRefreshLocalServerInfo) {
-        void onRefreshLocalServerInfo();
-      }
-
-      const initialMethod: 'local' | 'google' = dbMode === 'local' ? 'local' : 'google';
-      setAuthMethod(initialMethod);
-
-      if (dbMode === 'local' && needsAdminSetup) {
-        setAuthTab('setup');
-        setAuthEmail('informaticaurquiza@gmail.com');
-        setSignupName('Administrador Local');
-      } else {
-        setAuthTab('login');
-        setAuthEmail('');
-      }
+      setAuthMethod('google');
+      setAuthTab('login');
+      setAuthEmail('');
     }
   }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    if (!needsAdminSetup && authTab === 'setup') {
-      setAuthTab('login');
-    }
-  }, [open, needsAdminSetup, authTab]);
 
   useEffect(() => {
     if (profile) {
@@ -317,13 +244,6 @@ export function AccountModal({
             }
           : { isRegister: false },
       );
-      if (result && result.switchedToLocal) {
-        setAuthMethod('local');
-        setAuthNotice(
-          'Google no autoriza direcciones locales o IPs privadas de red. Podés continuar directamente con Cuenta local (correo y contraseña) aquí mismo.',
-        );
-        return;
-      }
       if (result && result.unauthorizedDomain) {
         setUnauthorizedDomain(result.unauthorizedDomain);
         return;
@@ -338,7 +258,7 @@ export function AccountModal({
     }
   }
 
-  async function handleLocalAuthSubmit(e: React.FormEvent, resendVerification = false) {
+  async function handleEmailAuthSubmit(e: React.FormEvent, resendVerification = false) {
     e.preventDefault();
     setAuthError('');
     setAuthNotice('');
@@ -348,20 +268,8 @@ export function AccountModal({
     setCanResendVerification(false);
     setAuthLoading(true);
     try {
-      if (authTab === 'setup') {
-        await onSetupLocalAdmin({
-          email: authEmail,
-          displayName: signupName,
-          businessName: signupBusiness,
-          password: authPassword,
-        });
-        setAuthPassword('');
-        onClose();
-        return;
-      }
-
       if (authTab === 'register') {
-        const result = await onRegisterLocal({
+        const result = await onRegisterEmail({
           email: authEmail,
           displayName: signupName,
           businessName: signupBusiness,
@@ -379,7 +287,7 @@ export function AccountModal({
           setPendingVerificationEmail(result.email || authEmail);
           setCanResendVerification(false);
           setAuthTab('login');
-          setAuthMethod('local');
+          setAuthMethod('email');
           return;
         }
         setAuthPassword('');
@@ -387,7 +295,7 @@ export function AccountModal({
         return;
       }
 
-      const result = await onLoginLocal({
+      const result = await onLoginEmail({
         email: authEmail,
         password: authPassword,
         resendVerification,
@@ -407,7 +315,9 @@ export function AccountModal({
       setAuthPassword('');
       onClose();
     } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'No pudimos completar el acceso local.');
+      setAuthError(
+        err instanceof Error ? err.message : 'No pudimos completar el acceso con correo.',
+      );
     } finally {
       setAuthLoading(false);
     }
@@ -421,10 +331,6 @@ export function AccountModal({
     setPendingVerificationEmail('');
     setCanResendVerification(false);
     setRecoverEmail(authEmail.trim());
-    setRecoverCode('');
-    setRecoverNewPassword('');
-    setRecoverConfirmPassword('');
-    setRecoverChannel(localAvailable && dbMode === 'local' ? 'local' : localAvailable ? 'local' : 'cloud');
     setRecoverStep('request');
     setAuthTab('recover');
   }
@@ -436,64 +342,18 @@ export function AccountModal({
     setEmailPasswordDisabled(false);
     setAuthLoading(true);
     try {
-      const targetChannel: 'local' | 'cloud' = localAvailable ? recoverChannel : 'cloud';
       const result = await onRequestPasswordReset({
         email: recoverEmail,
-        channel: targetChannel,
       });
       if (result.emailPasswordDisabled) {
         setEmailPasswordDisabled(true);
         return;
       }
-      if (result.mode === 'local') {
-        setRecoverStep('confirm_local');
-        setAuthNotice(
-          'Código de recuperación generado (válido por 15 minutos). Obtenelo en la consola del servidor PC o solicitalo al administrador desde Panel → Cuentas.',
-        );
-      } else {
-        setRecoverStep('sent_cloud');
-        onNotifyToast('Si la cuenta existe, enviamos el enlace de recuperación a tu correo.');
-      }
+      setRecoverStep('sent');
+      onNotifyToast('Si la cuenta existe, enviamos el enlace de recuperación a tu correo.');
     } catch (err) {
       setAuthError(
         err instanceof Error ? err.message : 'No pudimos iniciar la recuperación de contraseña.',
-      );
-    } finally {
-      setAuthLoading(false);
-    }
-  }
-
-  async function handleConfirmLocalRecoverySubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setAuthError('');
-    setAuthNotice('');
-    if (recoverNewPassword.length < 8) {
-      setAuthError('La nueva contraseña debe tener al menos 8 caracteres.');
-      return;
-    }
-    if (recoverNewPassword !== recoverConfirmPassword) {
-      setAuthError('Las nuevas contraseñas no coinciden.');
-      return;
-    }
-    setAuthLoading(true);
-    try {
-      await onConfirmLocalPasswordReset({
-        email: recoverEmail.trim(),
-        code: recoverCode.trim(),
-        newPassword: recoverNewPassword,
-      });
-      setAuthEmail(recoverEmail.trim());
-      setAuthPassword('');
-      setRecoverCode('');
-      setRecoverNewPassword('');
-      setRecoverConfirmPassword('');
-      setRecoverStep('request');
-      setAuthMethod('local');
-      setAuthTab('login');
-      setAuthNotice('Contraseña restablecida correctamente. Ya podés ingresar con tu nueva clave.');
-    } catch (err) {
-      setAuthError(
-        err instanceof Error ? err.message : 'No pudimos restablecer la contraseña local.',
       );
     } finally {
       setAuthLoading(false);
@@ -533,24 +393,6 @@ export function AccountModal({
           <button
             type="button"
             onClick={() => {
-              setAuthMethod('local');
-              setAuthError('');
-              setAuthNotice('');
-              setUnauthorizedDomain('');
-              setEmailPasswordDisabled(false);
-            }}
-            className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
-              authMethod === 'local'
-                ? 'border-zinc-950 bg-zinc-950 text-white'
-                : 'border-zinc-300 bg-white text-zinc-700 hover:border-zinc-950'
-            }`}
-          >
-            <KeyRound className="w-3.5 h-3.5 shrink-0" />
-            <span>Cuenta local</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
               setAuthMethod('google');
               setAuthError('');
               setAuthNotice('');
@@ -565,6 +407,24 @@ export function AccountModal({
           >
             <GoogleMark />
             <span>Cuenta de Google</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setAuthMethod('email');
+              setAuthError('');
+              setAuthNotice('');
+              setUnauthorizedDomain('');
+              setEmailPasswordDisabled(false);
+            }}
+            className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
+              authMethod === 'email'
+                ? 'border-zinc-950 bg-zinc-950 text-white'
+                : 'border-zinc-300 bg-white text-zinc-700 hover:border-zinc-950'
+            }`}
+          >
+            <Mail className="w-3.5 h-3.5 shrink-0" />
+            <span>Correo y clave</span>
           </button>
         </div>
       </div>
@@ -666,28 +526,8 @@ export function AccountModal({
         <div className="overflow-y-auto">
           {!user ? (
             <div className="p-6 space-y-5">
-              {/* Primary Action Tabs: Ingresar / Crear cuenta (+ Configurar Admin if unclaimed) */}
+              {/* Primary Action Tabs: Ingresar / Crear cuenta */}
               <div className="flex items-center gap-1 p-1 bg-zinc-100 rounded-lg text-xs">
-                {needsAdminSetup && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAuthTab('setup');
-                      setAuthMethod('local');
-                      setAuthEmail((prev) => prev || 'informaticaurquiza@gmail.com');
-                      setSignupName((prev) => prev || 'Administrador Local');
-                      setAuthError('');
-                      setAuthNotice('');
-                    }}
-                    className={`flex-1 py-2 px-2 rounded-md font-medium transition-colors cursor-pointer ${
-                      authTab === 'setup'
-                        ? 'bg-white text-zinc-950 shadow-sm'
-                        : 'text-zinc-600 hover:text-zinc-950'
-                    }`}
-                  >
-                    Configurar Admin
-                  </button>
-                )}
                 <button
                   type="button"
                   onClick={() => {
@@ -777,14 +617,14 @@ export function AccountModal({
                     <button
                       type="button"
                       onClick={() => {
-                        setAuthMethod('local');
+                        setAuthMethod('email');
                         setUnauthorizedDomain('');
                         setAuthError('');
                       }}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-zinc-900 bg-white hover:bg-zinc-50 border border-amber-300 rounded-md transition-colors cursor-pointer"
                     >
-                      <KeyRound className="w-3 h-3" />
-                      Usar Cuenta local
+                      <Mail className="w-3 h-3" />
+                      Usar correo y clave
                     </button>
                   </div>
                 </div>
@@ -796,10 +636,9 @@ export function AccountModal({
                     Habilitá el acceso por correo y contraseña en Firebase
                   </p>
                   <p className="text-amber-900 leading-relaxed">
-                    En este sitio web no hay un servidor PC Local activo. Para ingresar con correo y
-                    contraseña en la nube, activá el proveedor{' '}
+                    Para ingresar con correo y contraseña en la nube, activá el proveedor{' '}
                     <span className="font-semibold">Correo electrónico/Contraseña</span> en Firebase
-                    Authentication (o ingresá con tu cuenta de Google):
+                    Authentication (o ingresá directamente con tu cuenta de Google):
                   </p>
                   <div className="flex flex-wrap items-center gap-2">
                     <a
@@ -839,7 +678,7 @@ export function AccountModal({
                     <button
                       type="button"
                       disabled={authLoading}
-                      onClick={(e) => void handleLocalAuthSubmit(e, true)}
+                      onClick={(e) => void handleEmailAuthSubmit(e, true)}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-60 rounded-md transition-colors cursor-pointer"
                     >
                       Reenviar correo de verificación
@@ -854,110 +693,13 @@ export function AccountModal({
                 </p>
               )}
 
-              {/* TAB: SETUP FIRST LOCAL ADMIN */}
-              {authTab === 'setup' && needsAdminSetup && (
-                <form onSubmit={handleLocalAuthSubmit} className="space-y-4">
-                  <p className="text-xs text-zinc-600 leading-relaxed">
-                    Primer inicio local: definí la contraseña de tu cuenta administradora para
-                    gestionar el catálogo, clientes, pedidos y configuración de la tienda.
-                  </p>
-
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-700 mb-1">
-                      Nombre completo
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      minLength={2}
-                      maxLength={100}
-                      value={signupName}
-                      onChange={(e) => setSignupName(e.target.value)}
-                      placeholder="Ej. Martín Urquiza"
-                      className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-700 mb-1">
-                      Nombre comercial (opcional)
-                    </label>
-                    <input
-                      type="text"
-                      maxLength={120}
-                      value={signupBusiness}
-                      onChange={(e) => setSignupBusiness(e.target.value)}
-                      placeholder="Ej. Infourqui Distribuidora S.R.L."
-                      className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-700 mb-1">
-                      Correo electrónico
-                    </label>
-                    <input
-                      type="email"
-                      required
-                      maxLength={120}
-                      value={authEmail}
-                      onChange={(e) => setAuthEmail(e.target.value)}
-                      placeholder="correo@empresa.com"
-                      className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-700 mb-1">
-                      Contraseña (mínimo 8 caracteres)
-                    </label>
-                    <input
-                      type="password"
-                      required
-                      minLength={8}
-                      maxLength={128}
-                      value={authPassword}
-                      onChange={(e) => setAuthPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={authLoading}
-                    className="w-full py-2.5 px-4 bg-zinc-950 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer"
-                  >
-                    {authLoading ? 'Configurando...' : 'Crear administrador local'}
-                  </button>
-                </form>
-              )}
-
-              {/* TAB: INGRESAR (Local OR Google) */}
+              {/* TAB: INGRESAR (Google OR Email/Password) */}
               {authTab === 'login' && (
                 <div className="space-y-4">
                   {renderMethodSwitcher()}
 
-                  {authMethod === 'local' ? (
-                    <form onSubmit={handleLocalAuthSubmit} className="space-y-4">
-                      {localAvailable && needsAdminSetup && (
-                        <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-between gap-2 text-xs text-amber-950">
-                          <span>¿Primer ingreso como administrador local?</span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setAuthTab('setup');
-                              setAuthEmail((prev) => prev || 'informaticaurquiza@gmail.com');
-                              setSignupName((prev) => prev || 'Administrador Local');
-                              setAuthError('');
-                            }}
-                            className="font-semibold text-blue-700 hover:underline shrink-0 cursor-pointer"
-                          >
-                            Configurar Admin
-                          </button>
-                        </div>
-                      )}
-
+                  {authMethod === 'email' ? (
+                    <form onSubmit={handleEmailAuthSubmit} className="space-y-4">
                       <div>
                         <label className="block text-xs font-medium text-zinc-700 mb-1">
                           Correo electrónico
@@ -1003,7 +745,7 @@ export function AccountModal({
                         disabled={authLoading}
                         className="w-full py-2.5 px-4 bg-zinc-950 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer"
                       >
-                        {authLoading ? 'Verificando...' : 'Ingresar con cuenta local'}
+                        {authLoading ? 'Verificando...' : 'Ingresar con correo'}
                       </button>
 
                       <div className="relative flex items-center py-1">
@@ -1030,7 +772,8 @@ export function AccountModal({
                       </div>
                       <p className="text-xs text-zinc-600 leading-relaxed">
                         Accedé con tu cuenta de Google verificada para consultar tus pedidos,
-                        domicilios guardados, publicaciones y seguimiento de envíos en vivo.
+                        domicilios guardados, publicaciones y seguimiento de envíos en vivo desde la
+                        nube.
                       </p>
 
                       <button
@@ -1051,15 +794,15 @@ export function AccountModal({
                       <button
                         type="button"
                         onClick={() => {
-                          setAuthMethod('local');
+                          setAuthMethod('email');
                           setAuthError('');
                           setAuthNotice('');
                           setUnauthorizedDomain('');
                         }}
                         className="w-full py-2.5 px-4 bg-white hover:bg-zinc-50 border border-zinc-300 text-zinc-900 text-xs font-semibold rounded-lg transition-colors inline-flex items-center justify-center gap-2 cursor-pointer"
                       >
-                        <KeyRound className="w-3.5 h-3.5" />
-                        <span>Ingresar con cuenta local (correo y contraseña)</span>
+                        <Mail className="w-3.5 h-3.5" />
+                        <span>Ingresar con correo y contraseña</span>
                       </button>
                     </div>
                   )}
@@ -1103,54 +846,12 @@ export function AccountModal({
                       Recuperar contraseña
                     </h3>
                     <p className="text-xs text-zinc-600 mt-1 leading-relaxed">
-                      {localAvailable
-                        ? 'Elegí si querés restablecer tu cuenta local (PC / Red LAN) o tu cuenta en la nube.'
-                        : 'Ingresá tu correo electrónico y te enviaremos un enlace seguro para crear una nueva contraseña.'}
+                      Ingresá tu correo electrónico y te enviaremos un enlace seguro para crear una
+                      nueva contraseña.
                     </p>
                   </div>
 
-                  {localAvailable && (
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setRecoverChannel('local');
-                          setRecoverStep('request');
-                          setAuthError('');
-                          setAuthNotice('');
-                          setEmailPasswordDisabled(false);
-                        }}
-                        className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
-                          recoverChannel === 'local'
-                            ? 'border-zinc-950 bg-zinc-950 text-white'
-                            : 'border-zinc-300 bg-white text-zinc-700 hover:border-zinc-950'
-                        }`}
-                      >
-                        <KeyRound className="w-3.5 h-3.5 shrink-0" />
-                        <span>Cuenta local</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setRecoverChannel('cloud');
-                          setRecoverStep('request');
-                          setAuthError('');
-                          setAuthNotice('');
-                          setEmailPasswordDisabled(false);
-                        }}
-                        className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
-                          recoverChannel === 'cloud'
-                            ? 'border-blue-700 bg-blue-50 text-blue-950'
-                            : 'border-zinc-300 bg-white text-zinc-700 hover:border-zinc-950'
-                        }`}
-                      >
-                        <Mail className="w-3.5 h-3.5 shrink-0" />
-                        <span>Correo en la nube</span>
-                      </button>
-                    </div>
-                  )}
-
-                  {recoverStep === 'sent_cloud' ? (
+                  {recoverStep === 'sent' ? (
                     <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 space-y-2.5 text-xs text-emerald-950">
                       <p className="font-semibold">Revisá tu casilla de correo</p>
                       <p className="leading-relaxed">
@@ -1164,7 +865,7 @@ export function AccountModal({
                           type="button"
                           onClick={() => {
                             setAuthEmail(recoverEmail);
-                            setAuthMethod('local');
+                            setAuthMethod('email');
                             setAuthTab('login');
                             setRecoverStep('request');
                             setAuthError('');
@@ -1182,89 +883,6 @@ export function AccountModal({
                         </button>
                       </div>
                     </div>
-                  ) : localAvailable && recoverChannel === 'local' && recoverStep === 'confirm_local' ? (
-                    <form onSubmit={handleConfirmLocalRecoverySubmit} className="space-y-3.5">
-                      <div>
-                        <label className="block text-xs font-medium text-zinc-700 mb-1">
-                          Correo electrónico de la cuenta
-                        </label>
-                        <input
-                          type="email"
-                          required
-                          maxLength={120}
-                          value={recoverEmail}
-                          onChange={(e) => setRecoverEmail(e.target.value)}
-                          placeholder="cliente@correo.com"
-                          className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-medium text-zinc-700 mb-1">
-                          Código de recuperación (8 caracteres)
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          maxLength={16}
-                          value={recoverCode}
-                          onChange={(e) => setRecoverCode(e.target.value.toUpperCase())}
-                          placeholder="Ej. ABCD-2345"
-                          className="w-full px-3 py-2 text-sm font-mono uppercase tracking-wider border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-medium text-zinc-700 mb-1">
-                          Nueva contraseña (mínimo 8 caracteres)
-                        </label>
-                        <input
-                          type="password"
-                          required
-                          minLength={8}
-                          maxLength={128}
-                          value={recoverNewPassword}
-                          onChange={(e) => setRecoverNewPassword(e.target.value)}
-                          placeholder="••••••••"
-                          className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-medium text-zinc-700 mb-1">
-                          Confirmar nueva contraseña
-                        </label>
-                        <input
-                          type="password"
-                          required
-                          minLength={8}
-                          maxLength={128}
-                          value={recoverConfirmPassword}
-                          onChange={(e) => setRecoverConfirmPassword(e.target.value)}
-                          placeholder="••••••••"
-                          className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                        />
-                      </div>
-
-                      <button
-                        type="submit"
-                        disabled={authLoading}
-                        className="w-full py-2.5 px-4 bg-zinc-950 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer"
-                      >
-                        {authLoading ? 'Restableciendo...' : 'Restablecer contraseña'}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setRecoverStep('request');
-                          setAuthError('');
-                        }}
-                        className="w-full text-center text-xs font-medium text-zinc-600 hover:text-zinc-950 cursor-pointer"
-                      >
-                        Solicitar un código nuevo
-                      </button>
-                    </form>
                   ) : (
                     <form onSubmit={handleRequestRecoverySubmit} className="space-y-4">
                       <div>
@@ -1287,36 +905,20 @@ export function AccountModal({
                         disabled={authLoading}
                         className="w-full py-2.5 px-4 bg-zinc-950 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer"
                       >
-                        {authLoading
-                          ? 'Procesando...'
-                          : localAvailable && recoverChannel === 'local'
-                            ? 'Generar código de recuperación'
-                            : 'Enviar enlace de recuperación'}
+                        {authLoading ? 'Enviando...' : 'Enviar enlace de recuperación'}
                       </button>
-
-                      {localAvailable && recoverChannel === 'local' && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setRecoverStep('confirm_local');
-                            setAuthError('');
-                          }}
-                          className="w-full py-2 px-3 bg-white hover:bg-zinc-50 border border-zinc-300 text-zinc-800 text-xs font-medium rounded-lg transition-colors cursor-pointer"
-                        >
-                          Ya tengo un código de recuperación
-                        </button>
-                      )}
                     </form>
                   )}
 
                   <p className="text-[11px] text-zinc-500 leading-relaxed pt-1 border-t border-zinc-100">
-                    Si ingresás con <span className="font-medium text-zinc-700">Cuenta de Google</span>,
-                    tu contraseña se administra directamente desde tu cuenta de Google.
+                    Si ingresás con{' '}
+                    <span className="font-medium text-zinc-700">Cuenta de Google</span>, tu
+                    contraseña se administra directamente desde tu cuenta de Google.
                   </p>
                 </div>
               )}
 
-              {/* TAB: CREAR CUENTA DE CLIENTE (Local OR Google) */}
+              {/* TAB: CREAR CUENTA DE CLIENTE (Google OR Email/Password) */}
               {authTab === 'register' && (
                 <div className="space-y-4">
                   <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 flex items-start gap-2.5">
@@ -1328,8 +930,8 @@ export function AccountModal({
 
                   {renderMethodSwitcher()}
 
-                  {authMethod === 'local' ? (
-                    <form onSubmit={handleLocalAuthSubmit} className="space-y-3.5">
+                  {authMethod === 'email' ? (
+                    <form onSubmit={handleEmailAuthSubmit} className="space-y-3.5">
                       <div>
                         <label className="block text-xs font-medium text-zinc-700 mb-1">
                           Nombre completo
@@ -1412,7 +1014,7 @@ export function AccountModal({
                         disabled={authLoading}
                         className="w-full py-2.5 px-4 bg-zinc-950 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer"
                       >
-                        {authLoading ? 'Registrando...' : 'Crear cliente (cuenta local)'}
+                        {authLoading ? 'Registrando...' : 'Crear cuenta con correo'}
                       </button>
 
                       <div className="relative flex items-center py-0.5">
@@ -1441,7 +1043,7 @@ export function AccountModal({
                     >
                       <p className="text-xs text-zinc-600 leading-relaxed">
                         Completá tus datos opcionales y vinculá tu cuenta de Google para crear tu
-                        cuenta de cliente o vendedor.
+                        cuenta de cliente o vendedor en la nube.
                       </p>
 
                       <div>
@@ -1505,15 +1107,15 @@ export function AccountModal({
                       <button
                         type="button"
                         onClick={() => {
-                          setAuthMethod('local');
+                          setAuthMethod('email');
                           setAuthError('');
                           setAuthNotice('');
                           setUnauthorizedDomain('');
                         }}
                         className="w-full py-2.5 px-4 bg-white hover:bg-zinc-50 border border-zinc-300 text-zinc-900 text-xs font-semibold rounded-lg transition-colors inline-flex items-center justify-center gap-2 cursor-pointer"
                       >
-                        <KeyRound className="w-3.5 h-3.5" />
-                        <span>Crear cuenta local (correo y contraseña)</span>
+                        <Mail className="w-3.5 h-3.5" />
+                        <span>Crear cuenta con correo y contraseña</span>
                       </button>
                     </form>
                   )}
@@ -1536,417 +1138,405 @@ export function AccountModal({
               )}
             </div>
           ) : (
-              <div className="p-6 space-y-4">
-                <form onSubmit={handleSaveProfile} className="space-y-4">
-                  <div className="flex items-center gap-3 pb-4 border-b border-zinc-200">
-                    {user.photoURL ? (
-                      <img
-                        src={user.photoURL}
-                        alt={user.displayName || 'Usuario'}
-                        referrerPolicy="no-referrer"
-                        className="w-11 h-11 rounded-full object-cover border border-zinc-200"
-                      />
-                    ) : (
-                      <div className="w-11 h-11 rounded-full bg-zinc-100 flex items-center justify-center text-zinc-600">
-                        <UserIcon className="w-5 h-5" />
-                      </div>
-                    )}
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-zinc-950 truncate">
-                        {profile?.businessName || user.displayName || 'Usuario verificado'}
-                      </p>
-                      <p className="text-xs text-zinc-500 truncate">
-                        {user.email} · {isAdmin ? 'Administrador' : 'Cliente'}
-                      </p>
-                    </div>
-                  </div>
-
-                  {(() => {
-                    const subInfo = getAccountSubscriptionInfo(
-                      profile ? { ...profile, role: isAdmin ? 'admin' : profile.role } : null,
-                    );
-                    return (
-                      <div
-                        className={`p-3 rounded-xl border text-xs flex items-start gap-2.5 ${
-                          subInfo.isActive
-                            ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
-                            : 'bg-red-50/80 border-red-200 text-red-950'
-                        }`}
-                      >
-                        <CalendarClock
-                          className={`w-4 h-4 shrink-0 mt-0.5 ${
-                            subInfo.isActive ? 'text-emerald-700' : 'text-red-600'
-                          }`}
-                        />
-                        <div className="space-y-0.5">
-                          <p className="font-semibold">
-                            Fecha de ingreso: {formatShortDate(subInfo.joinedAtIso)} ·{' '}
-                            {subInfo.statusLabel}
-                          </p>
-                          <p className="text-[11px] opacity-90">{subInfo.detailText}</p>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-700 mb-1">
-                      Nombre completo
-                    </label>
-                    <input
-                      type="text"
-                      value={displayName}
-                      onChange={(e) => setDisplayName(e.target.value)}
-                      maxLength={100}
-                      className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+            <div className="p-6 space-y-4">
+              <form onSubmit={handleSaveProfile} className="space-y-4">
+                <div className="flex items-center gap-3 pb-4 border-b border-zinc-200">
+                  {user.photoURL ? (
+                    <img
+                      src={user.photoURL}
+                      alt={user.displayName || 'Usuario'}
+                      referrerPolicy="no-referrer"
+                      className="w-11 h-11 rounded-full object-cover border border-zinc-200"
                     />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-700 mb-1">
-                      Nombre comercial
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Ej. Estudio Norte S.R.L."
-                      value={businessName}
-                      onChange={(e) => setBusinessName(e.target.value)}
-                      maxLength={120}
-                      className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-700 mb-1">
-                      Teléfono de contacto
-                    </label>
-                    <input
-                      type="tel"
-                      placeholder="+54 11 5555-1234"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      maxLength={32}
-                      className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-700 mb-1">
-                      Dirección predeterminada
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Av. Santa Fe 1420, Piso 3"
-                      value={defaultAddress}
-                      onChange={(e) => setDefaultAddress(e.target.value)}
-                      maxLength={200}
-                      className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-zinc-700 mb-1">Ciudad</label>
-                      <input
-                        type="text"
-                        placeholder="Buenos Aires"
-                        value={defaultCity}
-                        onChange={(e) => setDefaultCity(e.target.value)}
-                        maxLength={80}
-                        className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                      />
+                  ) : (
+                    <div className="w-11 h-11 rounded-full bg-zinc-100 flex items-center justify-center text-zinc-600">
+                      <UserIcon className="w-5 h-5" />
                     </div>
-                    <div>
-                      <label className="block text-xs font-medium text-zinc-700 mb-1">
-                        Código postal
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="C1060"
-                        value={defaultPostalCode}
-                        onChange={(e) => setDefaultPostalCode(e.target.value)}
-                        maxLength={20}
-                        className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                      />
-                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-zinc-950 truncate">
+                      {profile?.businessName || user.displayName || 'Usuario verificado'}
+                    </p>
+                    <p className="text-xs text-zinc-500 truncate">
+                      {user.email} · {isAdmin ? 'Administrador' : 'Cliente'}
+                    </p>
                   </div>
+                </div>
 
-                  {/* Optional Buyer Banking Details in Profile */}
-                  <div className="p-4 rounded-xl border border-zinc-200 bg-zinc-50/70 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Landmark className="w-4 h-4 text-blue-700 shrink-0" />
-                      <div>
-                        <p className="text-xs font-semibold text-zinc-900">
-                          Datos Bancarios (opcional)
-                        </p>
-                        <p className="text-[11px] text-zinc-500">
-                          No obligatorio. Quedan guardados de forma privada en tu cuenta.
-                        </p>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium text-zinc-700 mb-1">
-                        CBU o CVU
-                      </label>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        placeholder="Ej. 0170099940000012345678"
-                        value={bankCbuCvu}
-                        onChange={(e) => setBankCbuCvu(e.target.value)}
-                        maxLength={32}
-                        className="w-full px-3 py-2 text-xs font-mono bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium text-zinc-700 mb-1">Alias</label>
-                      <input
-                        type="text"
-                        placeholder="Ej. juan.perez.banco"
-                        value={bankAlias}
-                        onChange={(e) => setBankAlias(e.target.value)}
-                        maxLength={60}
-                        className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium text-zinc-700 mb-1">
-                        Nombre de la cuenta
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="Ej. Juan Pérez — Caja de Ahorro"
-                        value={bankAccountHolder}
-                        onChange={(e) => setBankAccountHolder(e.target.value)}
-                        maxLength={120}
-                        className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end">
-                    <button
-                      type="submit"
-                      disabled={saving}
-                      className="w-full py-2.5 px-5 text-sm font-medium text-white bg-zinc-950 hover:bg-blue-700 disabled:opacity-60 rounded-lg transition-colors cursor-pointer"
-                    >
-                      {saving ? 'Guardando...' : 'Guardar datos'}
-                    </button>
-                  </div>
-                </form>
-
-                {/* Password Change Module */}
                 {(() => {
-                  const isEnvManagedLocalAdmin =
-                    dbMode === 'local' && isAdmin && Boolean(localServerInfo?.envAdminConfigured);
-                  const canEditPassword =
-                    (dbMode === 'local' && !isEnvManagedLocalAdmin) ||
-                    (dbMode === 'cloud' && canCurrentCloudUserChangePassword());
-
-                  async function handleSubmitPasswordChange(e: React.FormEvent) {
-                    e.preventDefault();
-                    setPasswordError('');
-                    setPasswordSuccess('');
-
-                    if (!currentPassword) {
-                      setPasswordError('Ingresá tu contraseña actual.');
-                      return;
-                    }
-                    if (newPassword.length < 8) {
-                      setPasswordError('La nueva contraseña debe tener al menos 8 caracteres.');
-                      return;
-                    }
-                    if (newPassword !== confirmNewPassword) {
-                      setPasswordError('La confirmación no coincide con la nueva contraseña.');
-                      return;
-                    }
-                    if (newPassword === currentPassword) {
-                      setPasswordError('La nueva contraseña debe ser diferente a la actual.');
-                      return;
-                    }
-
-                    setChangingPassword(true);
-                    try {
-                      await changeAccountPassword(currentPassword, newPassword);
-                      setCurrentPassword('');
-                      setNewPassword('');
-                      setConfirmNewPassword('');
-                      setPasswordSuccess('Contraseña actualizada correctamente.');
-                      onNotifyToast('Contraseña actualizada correctamente.');
-                    } catch (err) {
-                      setPasswordError(
-                        err instanceof Error
-                          ? err.message
-                          : 'No pudimos actualizar la contraseña.',
-                      );
-                    } finally {
-                      setChangingPassword(false);
-                    }
-                  }
-
+                  const subInfo = getAccountSubscriptionInfo(
+                    profile ? { ...profile, role: isAdmin ? 'admin' : profile.role } : null,
+                  );
                   return (
-                    <div className="border border-zinc-200 rounded-xl bg-zinc-50/70 overflow-hidden">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowPasswordSection((prev) => !prev);
-                          setPasswordError('');
-                          setPasswordSuccess('');
-                        }}
-                        className="w-full px-4 py-3 flex items-center justify-between gap-2 text-left hover:bg-zinc-100/70 transition-colors cursor-pointer"
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <KeyRound className="w-4 h-4 text-blue-700 shrink-0" />
-                          <div>
-                            <p className="text-xs font-semibold text-zinc-900">
-                              Cambiar contraseña
-                            </p>
-                            <p className="text-[11px] text-zinc-500">
-                              Actualizá tu clave de acceso de forma segura
-                            </p>
-                          </div>
-                        </div>
-                        {showPasswordSection ? (
-                          <ChevronUp className="w-4 h-4 text-zinc-500 shrink-0" />
-                        ) : (
-                          <ChevronDown className="w-4 h-4 text-zinc-500 shrink-0" />
-                        )}
-                      </button>
-
-                      {showPasswordSection && (
-                        <div className="px-4 pb-4 pt-3 border-t border-zinc-200 bg-white space-y-3">
-                          {isEnvManagedLocalAdmin ? (
-                            <p className="text-xs text-zinc-600 leading-relaxed">
-                              La contraseña del administrador está gestionada mediante la
-                              configuración del servidor (<code className="font-mono">LOCAL_ADMIN_PASSWORD</code>)
-                              y debe actualizarse desde esa variable de entorno.
-                            </p>
-                          ) : !canEditPassword ? (
-                            <p className="text-xs text-zinc-600 leading-relaxed">
-                              Ingresaste con tu cuenta de Google. La contraseña de las cuentas
-                              Google se administra directamente desde la configuración de seguridad
-                              de tu cuenta de Google.
-                            </p>
-                          ) : (
-                            <form onSubmit={handleSubmitPasswordChange} className="space-y-3">
-                              {passwordError && (
-                                <div className="p-2.5 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg">
-                                  {passwordError}
-                                </div>
-                              )}
-                              {passwordSuccess && (
-                                <div className="p-2.5 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg">
-                                  {passwordSuccess}
-                                </div>
-                              )}
-
-                              <div>
-                                <label className="block text-xs font-medium text-zinc-700 mb-1">
-                                  Contraseña actual
-                                </label>
-                                <input
-                                  type="password"
-                                  required
-                                  autoComplete="current-password"
-                                  maxLength={128}
-                                  value={currentPassword}
-                                  onChange={(e) => setCurrentPassword(e.target.value)}
-                                  placeholder="••••••••"
-                                  className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                                />
-                              </div>
-
-                              <div>
-                                <label className="block text-xs font-medium text-zinc-700 mb-1">
-                                  Nueva contraseña (mínimo 8 caracteres)
-                                </label>
-                                <input
-                                  type="password"
-                                  required
-                                  autoComplete="new-password"
-                                  minLength={8}
-                                  maxLength={128}
-                                  value={newPassword}
-                                  onChange={(e) => setNewPassword(e.target.value)}
-                                  placeholder="••••••••"
-                                  className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                                />
-                              </div>
-
-                              <div>
-                                <label className="block text-xs font-medium text-zinc-700 mb-1">
-                                  Confirmar nueva contraseña
-                                </label>
-                                <input
-                                  type="password"
-                                  required
-                                  autoComplete="new-password"
-                                  minLength={8}
-                                  maxLength={128}
-                                  value={confirmNewPassword}
-                                  onChange={(e) => setConfirmNewPassword(e.target.value)}
-                                  placeholder="••••••••"
-                                  className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                                />
-                              </div>
-
-                              <button
-                                type="submit"
-                                disabled={changingPassword}
-                                className="w-full py-2 px-4 text-xs font-medium text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-60 rounded-lg transition-colors cursor-pointer"
-                              >
-                                {changingPassword ? 'Actualizando...' : 'Actualizar contraseña'}
-                              </button>
-                            </form>
-                          )}
-                        </div>
-                      )}
+                    <div
+                      className={`p-3 rounded-xl border text-xs flex items-start gap-2.5 ${
+                        subInfo.isActive
+                          ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
+                          : 'bg-red-50/80 border-red-200 text-red-950'
+                      }`}
+                    >
+                      <CalendarClock
+                        className={`w-4 h-4 shrink-0 mt-0.5 ${
+                          subInfo.isActive ? 'text-emerald-700' : 'text-red-600'
+                        }`}
+                      />
+                      <div className="space-y-0.5">
+                        <p className="font-semibold">
+                          Fecha de ingreso: {formatShortDate(subInfo.joinedAtIso)} ·{' '}
+                          {subInfo.statusLabel}
+                        </p>
+                        <p className="text-[11px] opacity-90">{subInfo.detailText}</p>
+                      </div>
                     </div>
                   );
                 })()}
 
-                <div className="flex items-center justify-between py-2 border-t border-zinc-100">
-                  <div className="flex items-center gap-2 text-xs text-zinc-700">
-                    <Bell className="w-4 h-4 text-blue-700" />
-                    <span>
-                      Push navegador:{' '}
-                      <strong>
-                        {pushPermission === 'granted'
-                          ? 'Activadas'
-                          : pushPermission === 'denied'
-                            ? 'Bloqueadas'
-                            : 'Desactivadas'}
-                      </strong>
-                    </span>
-                  </div>
-                  {pushPermission !== 'granted' && pushPermission !== 'unsupported' && (
-                    <button
-                      type="button"
-                      onClick={onEnablePush}
-                      className="text-xs font-medium text-blue-700 hover:underline cursor-pointer"
-                    >
-                      Activar
-                    </button>
-                  )}
+                <div>
+                  <label className="block text-xs font-medium text-zinc-700 mb-1">
+                    Nombre completo
+                  </label>
+                  <input
+                    type="text"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    maxLength={100}
+                    className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                  />
                 </div>
 
-                <div className="flex items-center justify-start pt-1 border-t border-zinc-100">
+                <div>
+                  <label className="block text-xs font-medium text-zinc-700 mb-1">
+                    Nombre comercial
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ej. Estudio Norte S.R.L."
+                    value={businessName}
+                    onChange={(e) => setBusinessName(e.target.value)}
+                    maxLength={120}
+                    className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-zinc-700 mb-1">
+                    Teléfono de contacto
+                  </label>
+                  <input
+                    type="tel"
+                    placeholder="+54 11 5555-1234"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    maxLength={32}
+                    className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-zinc-700 mb-1">
+                    Dirección predeterminada
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Av. Santa Fe 1420, Piso 3"
+                    value={defaultAddress}
+                    onChange={(e) => setDefaultAddress(e.target.value)}
+                    maxLength={200}
+                    className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-700 mb-1">Ciudad</label>
+                    <input
+                      type="text"
+                      placeholder="Buenos Aires"
+                      value={defaultCity}
+                      onChange={(e) => setDefaultCity(e.target.value)}
+                      maxLength={80}
+                      className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-700 mb-1">
+                      Código postal
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="C1060"
+                      value={defaultPostalCode}
+                      onChange={(e) => setDefaultPostalCode(e.target.value)}
+                      maxLength={20}
+                      className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                    />
+                  </div>
+                </div>
+
+                {/* Optional Buyer Banking Details in Profile */}
+                <div className="p-4 rounded-xl border border-zinc-200 bg-zinc-50/70 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Landmark className="w-4 h-4 text-blue-700 shrink-0" />
+                    <div>
+                      <p className="text-xs font-semibold text-zinc-900">
+                        Datos Bancarios (opcional)
+                      </p>
+                      <p className="text-[11px] text-zinc-500">
+                        No obligatorio. Quedan guardados de forma privada en tu cuenta.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-700 mb-1">
+                      CBU o CVU
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="Ej. 0170099940000012345678"
+                      value={bankCbuCvu}
+                      onChange={(e) => setBankCbuCvu(e.target.value)}
+                      maxLength={32}
+                      className="w-full px-3 py-2 text-xs font-mono bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-700 mb-1">Alias</label>
+                    <input
+                      type="text"
+                      placeholder="Ej. juan.perez.banco"
+                      value={bankAlias}
+                      onChange={(e) => setBankAlias(e.target.value)}
+                      maxLength={60}
+                      className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-700 mb-1">
+                      Nombre de la cuenta
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ej. Juan Pérez — Caja de Ahorro"
+                      value={bankAccountHolder}
+                      onChange={(e) => setBankAccountHolder(e.target.value)}
+                      maxLength={120}
+                      className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
                   <button
-                    type="button"
-                    onClick={async () => {
-                      await onSignOut();
-                      onClose();
-                    }}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-zinc-600 hover:text-red-600 cursor-pointer"
+                    type="submit"
+                    disabled={saving}
+                    className="w-full py-2.5 px-5 text-sm font-medium text-white bg-zinc-950 hover:bg-blue-700 disabled:opacity-60 rounded-lg transition-colors cursor-pointer"
                   >
-                    <LogOut className="w-3.5 h-3.5" />
-                    Cerrar sesión
+                    {saving ? 'Guardando...' : 'Guardar datos'}
                   </button>
                 </div>
+              </form>
+
+              {/* Password Change Module */}
+              {(() => {
+                const canEditPassword = canCurrentCloudUserChangePassword();
+
+                async function handleSubmitPasswordChange(e: React.FormEvent) {
+                  e.preventDefault();
+                  setPasswordError('');
+                  setPasswordSuccess('');
+
+                  if (!currentPassword) {
+                    setPasswordError('Ingresá tu contraseña actual.');
+                    return;
+                  }
+                  if (newPassword.length < 8) {
+                    setPasswordError('La nueva contraseña debe tener al menos 8 caracteres.');
+                    return;
+                  }
+                  if (newPassword !== confirmNewPassword) {
+                    setPasswordError('La confirmación no coincide con la nueva contraseña.');
+                    return;
+                  }
+                  if (newPassword === currentPassword) {
+                    setPasswordError('La nueva contraseña debe ser diferente a la actual.');
+                    return;
+                  }
+
+                  setChangingPassword(true);
+                  try {
+                    await changeAccountPassword(currentPassword, newPassword);
+                    setCurrentPassword('');
+                    setNewPassword('');
+                    setConfirmNewPassword('');
+                    setPasswordSuccess('Contraseña actualizada correctamente.');
+                    onNotifyToast('Contraseña actualizada correctamente.');
+                  } catch (err) {
+                    setPasswordError(
+                      err instanceof Error
+                        ? err.message
+                        : 'No pudimos actualizar la contraseña.',
+                    );
+                  } finally {
+                    setChangingPassword(false);
+                  }
+                }
+
+                return (
+                  <div className="border border-zinc-200 rounded-xl bg-zinc-50/70 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowPasswordSection((prev) => !prev);
+                        setPasswordError('');
+                        setPasswordSuccess('');
+                      }}
+                      className="w-full px-4 py-3 flex items-center justify-between gap-2 text-left hover:bg-zinc-100/70 transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <KeyRound className="w-4 h-4 text-blue-700 shrink-0" />
+                        <div>
+                          <p className="text-xs font-semibold text-zinc-900">Cambiar contraseña</p>
+                          <p className="text-[11px] text-zinc-500">
+                            Actualizá tu clave de acceso de forma segura
+                          </p>
+                        </div>
+                      </div>
+                      {showPasswordSection ? (
+                        <ChevronUp className="w-4 h-4 text-zinc-500 shrink-0" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-zinc-500 shrink-0" />
+                      )}
+                    </button>
+
+                    {showPasswordSection && (
+                      <div className="px-4 pb-4 pt-3 border-t border-zinc-200 bg-white space-y-3">
+                        {!canEditPassword ? (
+                          <p className="text-xs text-zinc-600 leading-relaxed">
+                            Ingresaste con tu cuenta de Google. La contraseña de las cuentas Google
+                            se administra directamente desde la configuración de seguridad de tu
+                            cuenta de Google.
+                          </p>
+                        ) : (
+                          <form onSubmit={handleSubmitPasswordChange} className="space-y-3">
+                            {passwordError && (
+                              <div className="p-2.5 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg">
+                                {passwordError}
+                              </div>
+                            )}
+                            {passwordSuccess && (
+                              <div className="p-2.5 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg">
+                                {passwordSuccess}
+                              </div>
+                            )}
+
+                            <div>
+                              <label className="block text-xs font-medium text-zinc-700 mb-1">
+                                Contraseña actual
+                              </label>
+                              <input
+                                type="password"
+                                required
+                                autoComplete="current-password"
+                                maxLength={128}
+                                value={currentPassword}
+                                onChange={(e) => setCurrentPassword(e.target.value)}
+                                placeholder="••••••••"
+                                className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-medium text-zinc-700 mb-1">
+                                Nueva contraseña (mínimo 8 caracteres)
+                              </label>
+                              <input
+                                type="password"
+                                required
+                                autoComplete="new-password"
+                                minLength={8}
+                                maxLength={128}
+                                value={newPassword}
+                                onChange={(e) => setNewPassword(e.target.value)}
+                                placeholder="••••••••"
+                                className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-medium text-zinc-700 mb-1">
+                                Confirmar nueva contraseña
+                              </label>
+                              <input
+                                type="password"
+                                required
+                                autoComplete="new-password"
+                                minLength={8}
+                                maxLength={128}
+                                value={confirmNewPassword}
+                                onChange={(e) => setConfirmNewPassword(e.target.value)}
+                                placeholder="••••••••"
+                                className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
+                              />
+                            </div>
+
+                            <button
+                              type="submit"
+                              disabled={changingPassword}
+                              className="w-full py-2 px-4 text-xs font-medium text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-60 rounded-lg transition-colors cursor-pointer"
+                            >
+                              {changingPassword ? 'Actualizando...' : 'Actualizar contraseña'}
+                            </button>
+                          </form>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              <div className="flex items-center justify-between py-2 border-t border-zinc-100">
+                <div className="flex items-center gap-2 text-xs text-zinc-700">
+                  <Bell className="w-4 h-4 text-blue-700" />
+                  <span>
+                    Push navegador:{' '}
+                    <strong>
+                      {pushPermission === 'granted'
+                        ? 'Activadas'
+                        : pushPermission === 'denied'
+                          ? 'Bloqueadas'
+                          : 'Desactivadas'}
+                    </strong>
+                  </span>
+                </div>
+                {pushPermission !== 'granted' && pushPermission !== 'unsupported' && (
+                  <button
+                    type="button"
+                    onClick={onEnablePush}
+                    className="text-xs font-medium text-blue-700 hover:underline cursor-pointer"
+                  >
+                    Activar
+                  </button>
+                )}
               </div>
+
+              <div className="flex items-center justify-start pt-1 border-t border-zinc-100">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await onSignOut();
+                    onClose();
+                  }}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-600 hover:text-red-600 cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  Cerrar sesión
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>

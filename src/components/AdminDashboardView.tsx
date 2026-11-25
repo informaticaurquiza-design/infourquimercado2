@@ -3,14 +3,10 @@ import {
   AlertTriangle,
   BarChart3,
   Bell,
-  Copy,
   CreditCard,
-  Database,
   Edit3,
-  ExternalLink,
   FileCheck2,
   FolderTree,
-  Globe,
   HardDrive,
   Landmark,
   Minus,
@@ -74,8 +70,6 @@ import {
   type CategoryDefinition,
   type CategoryId,
   type CustomerBenefit,
-  type DatabaseMode,
-  type LocalServerInfo,
   type NotificationType,
   type Order,
   type Product,
@@ -89,7 +83,6 @@ import { AdminCategoriesPanel } from './AdminCategoriesPanel';
 import { BenefitsManagerModal } from './BenefitsManagerModal';
 import { DatabaseBackupPanel } from './DatabaseBackupPanel';
 import { FacebookShareModal } from './FacebookShareModal';
-import { LocalDatabasePanel } from './LocalDatabasePanel';
 import { ProductImage } from './ProductImage';
 import { ProductImagesEditor } from './ProductImagesEditor';
 import { SkuBarcodeScannerModal } from './SkuBarcodeScannerModal';
@@ -99,11 +92,6 @@ interface AdminDashboardViewProps {
   user: AppUser | null;
   profile: UserProfile | null;
   isAdmin: boolean;
-  dbMode: DatabaseMode;
-  onChangeDbMode: (mode: DatabaseMode) => void;
-  localServerInfo: LocalServerInfo | null;
-  onRefreshServerInfo: () => Promise<void>;
-  onRefreshLocalData?: () => Promise<void>;
   categories?: CategoryDefinition[];
   products: Product[];
   orders: Order[];
@@ -155,11 +143,6 @@ export function AdminDashboardView({
   user,
   profile,
   isAdmin,
-  dbMode,
-  onChangeDbMode,
-  localServerInfo,
-  onRefreshServerInfo,
-  onRefreshLocalData,
   categories = CATEGORIES,
   products,
   orders,
@@ -172,14 +155,6 @@ export function AdminDashboardView({
   onNotifyToast,
 }: AdminDashboardViewProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>(isAdmin ? 'analytics' : 'inventory');
-  const [showLocalDbOption, setShowLocalDbOption] = useState<boolean>(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      return params.get('cloudflare') === '1';
-    } catch {
-      return false;
-    }
-  });
   const [invSearch, setInvSearch] = useState('');
   const [onlyLowStock, setOnlyLowStock] = useState(false);
   const [facebookShareProduct, setFacebookShareProduct] = useState<Product | null>(null);
@@ -213,62 +188,6 @@ export function AdminDashboardView({
       setActiveTab((curr) => (curr === 'inventory' || curr === 'subscription' ? curr : 'inventory'));
     }
   }, [isAdmin]);
-
-  // Auto-open "PC Local y Red" tab when in Local / Red Local mode or when Cloudflare is pending/active
-  useEffect(() => {
-    if (!isAdmin) return;
-    let cfParam = false;
-    try {
-      cfParam = new URLSearchParams(window.location.search).get('cloudflare') === '1';
-    } catch {
-      cfParam = false;
-    }
-    if (
-      cfParam ||
-      dbMode === 'local' ||
-      Boolean(localServerInfo?.cloudflarePublicUrl) ||
-      localServerInfo?.cloudflarePhase === 'awaiting_browser_auth' ||
-      localServerInfo?.cloudflarePhase === 'starting' ||
-      (localServerInfo?.standalonePcMode && localServerInfo.networkMode === 'lan')
-    ) {
-      setShowLocalDbOption(true);
-      if (cfParam) {
-        setActiveTab('database');
-      }
-    }
-  }, [
-    isAdmin,
-    dbMode,
-    localServerInfo?.cloudflarePublicUrl,
-    localServerInfo?.cloudflarePhase,
-    localServerInfo?.standalonePcMode,
-    localServerInfo?.networkMode,
-  ]);
-
-  // Unlock/hide "PC Local y Red" option via Ctrl + F10
-  useEffect(() => {
-    if (!user || !isAdmin) return;
-
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.ctrlKey && !e.altKey && !e.metaKey && e.key === 'F10') {
-        e.preventDefault();
-        setShowLocalDbOption((prev) => {
-          const next = !prev;
-          if (next) {
-            setActiveTab('database');
-            onNotifyToast('Opción PC Local y Red activada (Ctrl + F10).');
-          } else {
-            setActiveTab((curr) => (curr === 'database' ? 'analytics' : curr));
-            onNotifyToast('Opción PC Local y Red ocultada.');
-          }
-          return next;
-        });
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [user, isAdmin, onNotifyToast]);
 
   // Shipping settings form state
   const [freeThresholdInput, setFreeThresholdInput] = useState(
@@ -513,17 +432,11 @@ export function AdminDashboardView({
       /^192\.168\./.test(host) ||
       /^10\./.test(host) ||
       /^172\.(1[6-9]|2\d|3[0-1])\./.test(host);
-    if (isPrivateHost && localServerInfo?.cloudflarePublicUrl) {
-      return {
-        shareBaseUrl: localServerInfo.cloudflarePublicUrl.replace(/\/+$/, ''),
-        isPrivateOriginWithoutPublicUrl: false,
-      };
-    }
     return {
       shareBaseUrl: window.location.origin.replace(/\/+$/, ''),
       isPrivateOriginWithoutPublicUrl: isPrivateHost,
     };
-  }, [localServerInfo?.cloudflarePublicUrl]);
+  }, []);
 
   function buildProductShareLinks(product: Product) {
     const productUrl = shareBaseUrl
@@ -940,9 +853,6 @@ export function AdminDashboardView({
                   icon: Users,
                 },
                 { id: 'backups', label: 'Respaldos', icon: HardDrive },
-                ...(showLocalDbOption
-                  ? ([{ id: 'database', label: 'PC Local y Red', icon: Database }] as const)
-                  : []),
               ] as const)
             : ([
                 { id: 'inventory', label: 'Mis Publicaciones', icon: Package },
@@ -969,81 +879,6 @@ export function AdminDashboardView({
           })}
         </div>
       </div>
-
-      {/* Pending Cloudflare Authorization in Google Chrome Banner */}
-      {isAdmin &&
-        localServerInfo?.cloudflarePhase === 'awaiting_browser_auth' &&
-        !localServerInfo?.cloudflarePublicUrl &&
-        activeTab !== 'database' && (
-          <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <Globe className="w-4 h-4 text-amber-700 shrink-0" />
-              <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-900">
-                  Habilitación de cuenta Cloudflare en Google Chrome
-                </p>
-                <p className="text-xs text-amber-800">
-                  Completá la autorización en Google Chrome para generar y mostrar la dirección web
-                  de Red Local y Celulares.
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setShowLocalDbOption(true);
-                setActiveTab('database');
-              }}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg cursor-pointer shrink-0"
-            >
-              Ver enlace y estado
-            </button>
-          </div>
-        )}
-
-      {/* Live Generated Cloudflare Public URL Banner */}
-      {isAdmin && localServerInfo?.cloudflarePublicUrl && (
-        <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <Globe className="w-4 h-4 text-emerald-700 shrink-0" />
-            <div className="min-w-0">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-800">
-                Cuenta Cloudflare activada · Dirección web generada (Red Local y Celulares)
-              </p>
-              <a
-                href={localServerInfo.cloudflarePublicUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-mono text-xs sm:text-sm font-bold text-blue-700 hover:underline truncate block"
-              >
-                {localServerInfo.cloudflarePublicUrl}
-              </a>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => {
-                void navigator.clipboard?.writeText(localServerInfo.cloudflarePublicUrl || '');
-                onNotifyToast('Dirección web de Cloudflare copiada.');
-              }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-zinc-800 bg-white border border-emerald-300 hover:border-zinc-950 rounded-lg cursor-pointer"
-            >
-              <Copy className="w-3.5 h-3.5" />
-              Copiar enlace
-            </button>
-            <a
-              href={localServerInfo.cloudflarePublicUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              Abrir web
-            </a>
-          </div>
-        </div>
-      )}
 
       {/* TAB 1: ANALYTICS (Admin only) */}
       {activeTab === 'analytics' && isAdmin && (
@@ -2064,7 +1899,6 @@ export function AdminDashboardView({
           isAdmin={isAdmin}
           payments={subscriptionPayments}
           onNotifyToast={onNotifyToast}
-          onPaymentSubmitted={onRefreshLocalData}
         />
       )}
 
@@ -2072,12 +1906,10 @@ export function AdminDashboardView({
       {activeTab === 'accounts' && isAdmin && (
         <AdminAccountsPanel
           adminUser={user}
-          dbMode={dbMode}
           accounts={accounts}
           subscriptionPayments={subscriptionPayments}
           products={products}
           onNotifyToast={onNotifyToast}
-          onRefreshLocalData={onRefreshLocalData}
         />
       )}
 
@@ -2088,31 +1920,15 @@ export function AdminDashboardView({
           categories={categories}
           products={products}
           onNotifyToast={onNotifyToast}
-          onRefreshLocalData={onRefreshLocalData}
         />
       )}
 
-      {/* TAB 8: DATABASE BACKUP & RESTORE (Local, LAN & Cloud — Admin only) */}
+      {/* TAB 8: FIRESTORE BACKUP & RESTORE (Admin only) */}
       {activeTab === 'backups' && isAdmin && (
         <DatabaseBackupPanel
           user={user}
-          dbMode={dbMode}
-          localServerInfo={localServerInfo}
           productsCount={products.length}
           ordersCount={orders.length}
-          onRefreshServerInfo={onRefreshServerInfo}
-          onNotifyToast={onNotifyToast}
-        />
-      )}
-
-      {/* TAB 9: LOCAL PC & NETWORK DATABASE (Unlocked with Ctrl + F10 — Admin only) */}
-      {activeTab === 'database' && isAdmin && showLocalDbOption && (
-        <LocalDatabasePanel
-          dbMode={dbMode}
-          onChangeDbMode={onChangeDbMode}
-          localServerInfo={localServerInfo}
-          onRefreshServerInfo={onRefreshServerInfo}
-          onOpenBackupsTab={() => setActiveTab('backups')}
           onNotifyToast={onNotifyToast}
         />
       )}

@@ -39,11 +39,7 @@ import {
   STANDARD_SHIPPING_COST,
   getAccountSubscriptionInfo,
 } from './lib/validation';
-import {
-  registerLocalProfileSyncCallback,
-  setActiveDatabaseMode,
-  updateUserProfile,
-} from './services/dataService';
+import { updateUserProfile } from './services/dataService';
 import {
   checkIsAdmin,
   ensureUserProfile,
@@ -51,18 +47,6 @@ import {
   seedInitialStoreData,
   updateUserProfile as firestoreUpdateUserProfile,
 } from './services/firestoreService';
-import {
-  fetchLocalBootstrap,
-  fetchLocalServerInfo,
-  localConfirmPasswordReset,
-  localRequestPasswordReset,
-  loginLocalAccount,
-  logoutLocalAccount,
-  registerLocalCustomer,
-  setLocalAuthToken,
-  setupLocalAdmin,
-  touchLocalSession,
-} from './services/localApiService';
 import {
   CATEGORIES,
   type ActiveView,
@@ -72,9 +56,7 @@ import {
   type CategoryDefinition,
   type CategoryId,
   type CustomerBenefit,
-  type DatabaseMode,
   type DeliveryAgent,
-  type LocalServerInfo,
   type Order,
   type Product,
   type StoreSettings,
@@ -82,10 +64,9 @@ import {
   type UserProfile,
 } from './types/ecommerce';
 
-const DB_MODE_STORAGE_KEY = 'alba_db_mode';
+const LEGACY_DB_MODE_STORAGE_KEY = 'alba_db_mode';
 const SESSION_IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 1 hora de inactividad
 const SESSION_ACTIVITY_STORAGE_KEY = 'infourqui_session_last_activity';
-const LOCAL_SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000; // Sincronizar actividad cada 5 min
 
 function readLastSessionActivity(): number | null {
   try {
@@ -112,34 +93,6 @@ function clearLastSessionActivity(): void {
   } catch {
     // ignore storage errors
   }
-}
-
-function isLocalOrLanHostname(hostname: string): boolean {
-  const host = hostname.trim().toLowerCase().replace(/^\[|\]$/g, '');
-  if (!host) return false;
-  if (
-    host === 'localhost' ||
-    host === '127.0.0.1' ||
-    host === '::1' ||
-    host.endsWith('.local') ||
-    host.endsWith('.trycloudflare.com') ||
-    host.endsWith('.app.github.dev') ||
-    host.endsWith('.githubpreview.dev')
-  ) {
-    return true;
-  }
-  if (
-    /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) ||
-    /^192\.168\.\d{1,3}\.\d{1,3}$/.test(host) ||
-    /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(host) ||
-    /^169\.254\.\d{1,3}\.\d{1,3}$/.test(host)
-  ) {
-    return true;
-  }
-  if (!host.includes('.')) {
-    return true;
-  }
-  return false;
 }
 
 function getFirebaseAuthErrorCode(err: unknown): string {
@@ -177,39 +130,6 @@ function mapFirebaseEmailAuthError(code: string): string {
   }
 }
 
-function readInitialDbMode(): DatabaseMode {
-  try {
-    const params = new URLSearchParams(window.location.search);
-    const urlMode = params.get('mode')?.toLowerCase();
-    if (urlMode === 'local' || urlMode === 'lan') {
-      window.localStorage.setItem(DB_MODE_STORAGE_KEY, 'local');
-      setActiveDatabaseMode('local');
-      return 'local';
-    }
-    if (urlMode === 'cloud') {
-      window.localStorage.setItem(DB_MODE_STORAGE_KEY, 'cloud');
-      setActiveDatabaseMode('cloud');
-      return 'cloud';
-    }
-
-    if (isLocalOrLanHostname(window.location.hostname)) {
-      window.localStorage.setItem(DB_MODE_STORAGE_KEY, 'local');
-      setActiveDatabaseMode('local');
-      return 'local';
-    }
-
-    const saved = window.localStorage.getItem(DB_MODE_STORAGE_KEY);
-    if (saved === 'local' || saved === 'cloud') {
-      setActiveDatabaseMode(saved);
-      return saved;
-    }
-  } catch {
-    // ignore storage/URL errors
-  }
-  setActiveDatabaseMode('cloud');
-  return 'cloud';
-}
-
 function getMillis(ts: unknown): number {
   if (!ts) return 0;
   if (typeof ts === 'string') return new Date(ts).getTime() || 0;
@@ -240,55 +160,27 @@ function AppContent() {
   const [selectedCategory, setSelectedCategory] = useState<CategoryId | 'all'>('all');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
-  // Database Mode State ('cloud' Firebase vs 'local' PC/LAN Server)
-  const [dbMode, setDbMode] = useState<DatabaseMode>(() => readInitialDbMode());
-  const [localServerInfo, setLocalServerInfo] = useState<LocalServerInfo | null>(null);
-
-  // Cloud (Firebase) Auth & Data State
+  // Firebase Auth & Firestore Cloud State
   const [cloudUser, setCloudUser] = useState<User | null>(null);
   const [cloudAuthReady, setCloudAuthReady] = useState(false);
-  const [cloudIsAdmin, setCloudIsAdmin] = useState(false);
-  const [cloudProfile, setCloudProfile] = useState<UserProfile | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [cloudCategories, setCloudCategories] = useState<CategoryDefinition[]>([]);
   const seededCategoriesRef = useRef(false);
   const [firestoreProducts, setFirestoreProducts] = useState<Product[]>([]);
-  const [cloudSellerOwnProducts, setCloudSellerOwnProducts] = useState<Product[]>([]);
-  const [cloudProductsLoading, setCloudProductsLoading] = useState(true);
-  const [cloudOrders, setCloudOrders] = useState<Order[]>([]);
-  const [cloudAccounts, setCloudAccounts] = useState<UserProfile[]>([]);
+  const [sellerOwnProducts, setSellerOwnProducts] = useState<Product[]>([]);
+  const [productsLoading, setProductsLoading] = useState(true);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [accounts, setAccounts] = useState<UserProfile[]>([]);
   const [cloudDeliveryAgents, setCloudDeliveryAgents] = useState<DeliveryAgent[]>([]);
-  const [cloudAdminBenefits, setCloudAdminBenefits] = useState<CustomerBenefit[]>([]);
-  const [cloudGlobalBenefits, setCloudGlobalBenefits] = useState<CustomerBenefit[]>([]);
-  const [cloudPersonalBenefits, setCloudPersonalBenefits] = useState<CustomerBenefit[]>([]);
-  const [cloudOwnedBenefits, setCloudOwnedBenefits] = useState<CustomerBenefit[]>([]);
-  const [cloudSubscriptionPayments, setCloudSubscriptionPayments] = useState<SubscriptionPayment[]>(
-    [],
-  );
-  const [cloudPersonalNotifications, setCloudPersonalNotifications] = useState<AppNotification[]>([]);
-  const [cloudBroadcastNotifications, setCloudBroadcastNotifications] = useState<AppNotification[]>(
-    [],
-  );
-  const [cloudShippingSettings, setCloudShippingSettings] = useState<StoreSettings>({
-    freeShippingThreshold: FREE_SHIPPING_THRESHOLD,
-    standardShippingCost: STANDARD_SHIPPING_COST,
-  });
-
-  // Local / LAN PC Database Auth & Data State
-  const [localUser, setLocalUser] = useState<AppUser | null>(null);
-  const [localProfile, setLocalProfile] = useState<UserProfile | null>(null);
-  const [localIsAdmin, setLocalIsAdmin] = useState(false);
-  const [localCategories, setLocalCategories] = useState<CategoryDefinition[]>([]);
-  const [localProducts, setLocalProducts] = useState<Product[]>([]);
-  const [localProductsLoading, setLocalProductsLoading] = useState(true);
-  const [localOrders, setLocalOrders] = useState<Order[]>([]);
-  const [localAccounts, setLocalAccounts] = useState<UserProfile[]>([]);
-  const [localDeliveryAgents, setLocalDeliveryAgents] = useState<DeliveryAgent[]>([]);
-  const [localBenefits, setLocalBenefits] = useState<CustomerBenefit[]>([]);
-  const [localSubscriptionPayments, setLocalSubscriptionPayments] = useState<SubscriptionPayment[]>(
-    [],
-  );
-  const [localNotifications, setLocalNotifications] = useState<AppNotification[]>([]);
-  const [localShippingSettings, setLocalShippingSettings] = useState<StoreSettings>({
+  const [adminBenefits, setAdminBenefits] = useState<CustomerBenefit[]>([]);
+  const [globalBenefits, setGlobalBenefits] = useState<CustomerBenefit[]>([]);
+  const [personalBenefits, setPersonalBenefits] = useState<CustomerBenefit[]>([]);
+  const [ownedBenefits, setOwnedBenefits] = useState<CustomerBenefit[]>([]);
+  const [subscriptionPayments, setSubscriptionPayments] = useState<SubscriptionPayment[]>([]);
+  const [personalNotifications, setPersonalNotifications] = useState<AppNotification[]>([]);
+  const [broadcastNotifications, setBroadcastNotifications] = useState<AppNotification[]>([]);
+  const [shippingSettings, setShippingSettings] = useState<StoreSettings>({
     freeShippingThreshold: FREE_SHIPPING_THRESHOLD,
     standardShippingCost: STANDARD_SHIPPING_COST,
   });
@@ -308,14 +200,21 @@ function AppContent() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const seenNotifIds = useRef<Set<string>>(new Set());
   const initialNotifsLoaded = useRef(false);
-  const seenLocalNotifIds = useRef<Set<string>>(new Set());
-  const initialLocalNotifsLoaded = useRef(false);
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
     window.setTimeout(() => {
       setToastMessage((curr) => (curr === msg ? null : curr));
     }, 3600);
+  }, []);
+
+  // Remove any legacy local-mode preference left over in browser storage
+  useEffect(() => {
+    try {
+      window.localStorage.removeItem(LEGACY_DB_MODE_STORAGE_KEY);
+    } catch {
+      // ignore storage errors
+    }
   }, []);
 
   const syncCartWithLiveProducts = useCallback((liveProducts: Product[]) => {
@@ -341,173 +240,27 @@ function AppContent() {
     );
   }, []);
 
-  // Keep activeDatabaseMode in sync with state
-  useEffect(() => {
-    setActiveDatabaseMode(dbMode);
-  }, [dbMode]);
-
-  // Register local profile sync callback for AccountModal updates
-  useEffect(() => {
-    registerLocalProfileSyncCallback(({ profile, user }) => {
-      setLocalProfile(profile);
-      setLocalUser(user);
-    });
-    return () => registerLocalProfileSyncCallback(null);
-  }, []);
-
-  // Track whether user manually changed DB mode in this session
-  const userChangedDbModeRef = useRef(false);
-
-  // Detect PC Local / LAN backend availability
-  const refreshLocalServerInfo = useCallback(async () => {
-    const info = await fetchLocalServerInfo();
-    setLocalServerInfo(info);
-    if (!info && dbMode === 'local') {
-      setActiveDatabaseMode('cloud');
-      setDbMode('cloud');
-      try {
-        window.localStorage.setItem(DB_MODE_STORAGE_KEY, 'cloud');
-      } catch {
-        // ignore storage errors
-      }
-      showToast('El servidor PC Local no respondió; se restauró el modo Nube (Firebase).');
-      return;
-    }
-    if (info?.available && info.standalonePcMode && !userChangedDbModeRef.current && dbMode !== 'local') {
-      setActiveDatabaseMode('local');
-      setDbMode('local');
-      try {
-        window.localStorage.setItem(DB_MODE_STORAGE_KEY, 'local');
-      } catch {
-        // ignore storage errors
-      }
-    }
-  }, [dbMode, showToast]);
-
-  useEffect(() => {
-    void refreshLocalServerInfo();
-  }, [refreshLocalServerInfo]);
-
-  // Load local database snapshot & sync notifications/cart
-  const loadLocalData = useCallback(async () => {
-    try {
-      const payload = await fetchLocalBootstrap();
-      const sortedOrders = [...payload.orders].sort(
-        (a, b) => getMillis(b.createdAt) - getMillis(a.createdAt),
-      );
-      const sortedNotifs = [...payload.notifications].sort(
-        (a, b) => getMillis(b.createdAt) - getMillis(a.createdAt),
-      );
-      const sortedSubPayments = [...(payload.subscriptionPayments || [])].sort(
-        (a, b) => getMillis(b.createdAt) - getMillis(a.createdAt),
-      );
-
-      setLocalCategories(Array.isArray(payload.categories) ? payload.categories : []);
-      setLocalProducts(payload.products);
-      setLocalProductsLoading(false);
-      setLocalOrders(sortedOrders);
-      setLocalAccounts(Array.isArray(payload.accounts) ? payload.accounts : []);
-      setLocalDeliveryAgents(Array.isArray(payload.deliveryAgents) ? payload.deliveryAgents : []);
-      setLocalBenefits(
-        Array.isArray(payload.benefits)
-          ? [...payload.benefits].sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt))
-          : [],
-      );
-      setLocalSubscriptionPayments(sortedSubPayments);
-      setLocalShippingSettings(payload.shippingSettings);
-      setLocalIsAdmin(payload.isAdmin);
-
-      if (payload.profile) {
-        setLocalProfile(payload.profile);
-        setLocalUser({
-          uid: payload.profile.uid,
-          email: payload.profile.email || null,
-          displayName: payload.profile.displayName || null,
-          photoURL: payload.profile.photoURL || null,
-          emailVerified: true,
-        });
-      } else {
-        setLocalProfile(null);
-        setLocalUser(null);
-        setLocalAuthToken(null);
-      }
-
-      if (payload.profile) {
-        const personal = sortedNotifs.filter((n) => n.userId === payload.profile?.uid);
-        if (initialLocalNotifsLoaded.current) {
-          for (const notif of personal) {
-            if (!seenLocalNotifIds.current.has(notif.id) && !notif.read) {
-              seenLocalNotifIds.current.add(notif.id);
-              sendBrowserPush(notif.title, notif.message, notif.id);
-              showToast(notif.title);
-            }
-          }
-        } else {
-          personal.forEach((n) => seenLocalNotifIds.current.add(n.id));
-          initialLocalNotifsLoaded.current = true;
-        }
-      }
-      setLocalNotifications(sortedNotifs);
-      syncCartWithLiveProducts(payload.products);
-    } catch {
-      setLocalProductsLoading(false);
-    }
-  }, [showToast, syncCartWithLiveProducts]);
-
-  // Real-time SSE subscription for PC Local / Red Local (LAN) mode
-  useEffect(() => {
-    if (dbMode !== 'local') return;
-
-    setLocalProductsLoading(true);
-    void loadLocalData();
-    void refreshLocalServerInfo();
-
-    const eventSource = new EventSource('/api/local/events');
-    eventSource.onmessage = (event) => {
-      try {
-        const parsed = JSON.parse(event.data) as { type?: string };
-        if (parsed.type === 'connected') return;
-      } catch {
-        // ignore parse errors
-      }
-      void loadLocalData();
-      void refreshLocalServerInfo();
-    };
-
-    return () => {
-      eventSource.close();
-    };
-  }, [dbMode, loadLocalData, refreshLocalServerInfo]);
-
-  // Reset local notification tracking when switching local users
-  useEffect(() => {
-    initialLocalNotifsLoaded.current = false;
-    seenLocalNotifIds.current.clear();
-  }, [localUser?.uid]);
-
-  const cloudProducts = useMemo(() => {
-    if (cloudIsAdmin || cloudSellerOwnProducts.length === 0) return firestoreProducts;
+  const products = useMemo(() => {
+    if (isAdmin || sellerOwnProducts.length === 0) return firestoreProducts;
     const byId = new Map<string, Product>();
     for (const p of firestoreProducts) byId.set(p.id, p);
-    for (const p of cloudSellerOwnProducts) byId.set(p.id, p);
+    for (const p of sellerOwnProducts) byId.set(p.id, p);
     return Array.from(byId.values());
-  }, [cloudIsAdmin, firestoreProducts, cloudSellerOwnProducts]);
+  }, [isAdmin, firestoreProducts, sellerOwnProducts]);
 
-  // 1. Firebase Auth Subscription & Admin Seeding (Cloud Mode only)
+  // 1. Firebase Auth Subscription & Initial Cloud Seeding
   useEffect(() => {
-    if (dbMode !== 'cloud') return;
-
     const unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
       if (!nextUser || !nextUser.emailVerified) {
         setCloudUser(null);
-        setCloudIsAdmin(false);
-        setCloudProfile(null);
-        setCloudOrders([]);
-        setCloudSellerOwnProducts([]);
-        setCloudAccounts([]);
-        setCloudSubscriptionPayments([]);
-        setCloudPersonalNotifications([]);
-        setCloudBroadcastNotifications([]);
+        setIsAdmin(false);
+        setProfile(null);
+        setOrders([]);
+        setSellerOwnProducts([]);
+        setAccounts([]);
+        setSubscriptionPayments([]);
+        setPersonalNotifications([]);
+        setBroadcastNotifications([]);
         initialNotifsLoaded.current = false;
         seenNotifIds.current.clear();
         setCloudAuthReady(true);
@@ -521,13 +274,13 @@ function AppContent() {
           checkIsAdmin(nextUser),
           ensureUserProfile(nextUser),
         ]);
-        setCloudIsAdmin(adminFlag);
-        setCloudProfile(userProfile);
+        setIsAdmin(adminFlag);
+        setProfile(userProfile);
 
         if (adminFlag) {
           const seeded = await seedInitialStoreData(nextUser);
           if (seeded) {
-            showToast('Catálogo inicial, inventario y pedidos sincronizados en tiempo real.');
+            showToast('Catálogo inicial, inventario y pedidos sincronizados en Firebase Firestore.');
           }
         }
       } catch (err) {
@@ -538,12 +291,12 @@ function AppContent() {
     });
 
     return () => unsubscribe();
-  }, [dbMode, showToast]);
+  }, [showToast]);
 
-  // 2. Real-time Products Listener (Cloud Mode only)
+  // 2. Real-time Products Listener (Firestore)
   useEffect(() => {
-    if (dbMode !== 'cloud' || !cloudAuthReady) return;
-    const productsQuery = cloudIsAdmin
+    if (!cloudAuthReady) return;
+    const productsQuery = isAdmin
       ? query(collection(db, 'products'))
       : query(collection(db, 'products'), where('active', '==', true));
 
@@ -555,27 +308,26 @@ function AppContent() {
           ...(d.data() as Omit<Product, 'id'>),
         }));
         setFirestoreProducts(list);
-        setCloudProductsLoading(false);
+        setProductsLoading(false);
         syncCartWithLiveProducts(list);
       },
       (error) => {
-        setCloudProductsLoading(false);
+        setProductsLoading(false);
         handleFirestoreError(error, OperationType.LIST, 'products');
       },
     );
 
     return () => unsubscribe();
-  }, [dbMode, cloudAuthReady, cloudIsAdmin, syncCartWithLiveProducts]);
+  }, [cloudAuthReady, isAdmin, syncCartWithLiveProducts]);
 
-  // 2b. Real-time Shipping Settings Listener (Cloud Mode only)
+  // 2b. Real-time Shipping Settings Listener (Firestore)
   useEffect(() => {
-    if (dbMode !== 'cloud') return;
     const unsubscribe = onSnapshot(
       doc(db, 'settings', 'shipping'),
       (snap) => {
         if (snap.exists()) {
           const data = snap.data() as Partial<StoreSettings>;
-          setCloudShippingSettings({
+          setShippingSettings({
             freeShippingThreshold:
               typeof data.freeShippingThreshold === 'number'
                 ? data.freeShippingThreshold
@@ -594,16 +346,16 @@ function AppContent() {
       },
     );
     return () => unsubscribe();
-  }, [dbMode]);
+  }, []);
 
-  // 2c. Real-time User Profile Listener (Cloud Mode only)
+  // 2c. Real-time User Profile Listener (Firestore)
   useEffect(() => {
-    if (dbMode !== 'cloud' || !cloudAuthReady || !cloudUser) return;
+    if (!cloudAuthReady || !cloudUser) return;
     const unsubscribe = onSnapshot(
       doc(db, 'users', cloudUser.uid),
       (snap) => {
         if (snap.exists()) {
-          setCloudProfile(snap.data() as UserProfile);
+          setProfile(snap.data() as UserProfile);
         }
       },
       (error) => {
@@ -611,16 +363,16 @@ function AppContent() {
       },
     );
     return () => unsubscribe();
-  }, [dbMode, cloudAuthReady, cloudUser]);
+  }, [cloudAuthReady, cloudUser]);
 
-  // 3. Real-time Orders Listener (Cloud Mode: Admin sees all; users see purchases + orders where they are seller)
+  // 3. Real-time Orders Listener (Admin sees all; users see purchases + orders where they are seller)
   useEffect(() => {
-    if (dbMode !== 'cloud' || !cloudAuthReady || !cloudUser) {
-      setCloudOrders([]);
+    if (!cloudAuthReady || !cloudUser) {
+      setOrders([]);
       return;
     }
 
-    if (cloudIsAdmin) {
+    if (isAdmin) {
       const unsubscribe = onSnapshot(
         query(collection(db, 'orders')),
         (snapshot) => {
@@ -630,7 +382,7 @@ function AppContent() {
               ...(d.data() as Omit<Order, 'id'>),
             }))
             .sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt));
-          setCloudOrders(list);
+          setOrders(list);
         },
         (error) => {
           handleFirestoreError(error, OperationType.LIST, 'orders');
@@ -647,7 +399,7 @@ function AppContent() {
       for (const order of [...buyerOrders, ...sellerOrders]) {
         unique.set(order.id, order);
       }
-      setCloudOrders(
+      setOrders(
         Array.from(unique.values()).sort(
           (a, b) => getMillis(b.createdAt) - getMillis(a.createdAt),
         ),
@@ -686,11 +438,11 @@ function AppContent() {
       unsubBuyer();
       unsubSeller();
     };
-  }, [dbMode, cloudAuthReady, cloudUser, cloudIsAdmin]);
+  }, [cloudAuthReady, cloudUser, isAdmin]);
 
-  // 4. Real-time Push Notifications Listeners (Cloud Mode only)
+  // 4. Real-time Push Notifications Listeners (Firestore)
   useEffect(() => {
-    if (dbMode !== 'cloud' || !cloudAuthReady || !cloudUser) return;
+    if (!cloudAuthReady || !cloudUser) return;
 
     const personalQ = query(
       collection(db, 'notifications'),
@@ -718,7 +470,7 @@ function AppContent() {
           list.forEach((n) => seenNotifIds.current.add(n.id));
           initialNotifsLoaded.current = true;
         }
-        setCloudPersonalNotifications(list);
+        setPersonalNotifications(list);
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, 'notifications');
@@ -732,7 +484,7 @@ function AppContent() {
           id: d.id,
           ...(d.data() as Omit<AppNotification, 'id'>),
         }));
-        setCloudBroadcastNotifications(list);
+        setBroadcastNotifications(list);
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, 'notifications');
@@ -743,12 +495,12 @@ function AppContent() {
       unsubPersonal();
       unsubBroadcast();
     };
-  }, [dbMode, cloudAuthReady, cloudUser, showToast]);
+  }, [cloudAuthReady, cloudUser, showToast]);
 
-  // 4b. Real-time Seller Own Products Listener (Cloud Mode non-admin sellers)
+  // 4b. Real-time Seller Own Products Listener (non-admin sellers)
   useEffect(() => {
-    if (dbMode !== 'cloud' || !cloudAuthReady || !cloudUser || cloudIsAdmin) {
-      setCloudSellerOwnProducts([]);
+    if (!cloudAuthReady || !cloudUser || isAdmin) {
+      setSellerOwnProducts([]);
       return;
     }
     const ownProductsQ = query(
@@ -762,22 +514,22 @@ function AppContent() {
           id: d.id,
           ...(d.data() as Omit<Product, 'id'>),
         }));
-        setCloudSellerOwnProducts(list);
+        setSellerOwnProducts(list);
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, 'products');
       },
     );
     return () => unsubscribe();
-  }, [dbMode, cloudAuthReady, cloudUser, cloudIsAdmin]);
+  }, [cloudAuthReady, cloudUser, isAdmin]);
 
-  // 4c. Real-time Subscription Payments Listener (Cloud Mode)
+  // 4c. Real-time Subscription Payments Listener (Firestore)
   useEffect(() => {
-    if (dbMode !== 'cloud' || !cloudAuthReady || !cloudUser) {
-      setCloudSubscriptionPayments([]);
+    if (!cloudAuthReady || !cloudUser) {
+      setSubscriptionPayments([]);
       return;
     }
-    const subPaymentsQ = cloudIsAdmin
+    const subPaymentsQ = isAdmin
       ? query(collection(db, 'subscriptionPayments'))
       : query(collection(db, 'subscriptionPayments'), where('userId', '==', cloudUser.uid));
 
@@ -790,19 +542,19 @@ function AppContent() {
             ...(d.data() as Omit<SubscriptionPayment, 'id'>),
           }))
           .sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt));
-        setCloudSubscriptionPayments(list);
+        setSubscriptionPayments(list);
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, 'subscriptionPayments');
       },
     );
     return () => unsubscribe();
-  }, [dbMode, cloudAuthReady, cloudUser, cloudIsAdmin]);
+  }, [cloudAuthReady, cloudUser, isAdmin]);
 
-  // 4d. Real-time Accounts Directory Listener (Cloud Mode Admin only)
+  // 4d. Real-time Accounts Directory Listener (Admin only)
   useEffect(() => {
-    if (dbMode !== 'cloud' || !cloudAuthReady || !cloudIsAdmin) {
-      setCloudAccounts([]);
+    if (!cloudAuthReady || !isAdmin) {
+      setAccounts([]);
       return;
     }
     const unsubscribe = onSnapshot(
@@ -812,23 +564,23 @@ function AppContent() {
           ...(d.data() as UserProfile),
           uid: d.id,
         }));
-        setCloudAccounts(list);
+        setAccounts(list);
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, 'users');
       },
     );
     return () => unsubscribe();
-  }, [dbMode, cloudAuthReady, cloudIsAdmin]);
+  }, [cloudAuthReady, isAdmin]);
 
   // 4e. Real-time Delivery Agents (Medios de Envío) Listener (Strict Per-Client Ownership)
   useEffect(() => {
-    if (dbMode !== 'cloud' || !cloudAuthReady || !cloudUser) {
+    if (!cloudAuthReady || !cloudUser) {
       setCloudDeliveryAgents([]);
       return;
     }
     const isBootstrappedAdminAccount =
-      cloudIsAdmin &&
+      isAdmin &&
       Boolean(cloudUser.emailVerified) &&
       cloudUser.email?.toLowerCase() === 'informaticaurquiza@gmail.com';
     const agentsQuery = isBootstrappedAdminAccount
@@ -856,22 +608,22 @@ function AppContent() {
       },
     );
     return () => unsubscribe();
-  }, [dbMode, cloudAuthReady, cloudIsAdmin, cloudUser]);
+  }, [cloudAuthReady, isAdmin, cloudUser]);
 
-  // 4f. Real-time Benefits Listeners (Cloud Mode: full list for Admin; global + personal + owned for customers/guests)
+  // 4f. Real-time Benefits Listeners (Firestore)
   useEffect(() => {
-    if (dbMode !== 'cloud' || !cloudAuthReady) {
-      setCloudAdminBenefits([]);
-      setCloudGlobalBenefits([]);
-      setCloudPersonalBenefits([]);
-      setCloudOwnedBenefits([]);
+    if (!cloudAuthReady) {
+      setAdminBenefits([]);
+      setGlobalBenefits([]);
+      setPersonalBenefits([]);
+      setOwnedBenefits([]);
       return;
     }
 
-    if (cloudIsAdmin) {
-      setCloudGlobalBenefits([]);
-      setCloudPersonalBenefits([]);
-      setCloudOwnedBenefits([]);
+    if (isAdmin) {
+      setGlobalBenefits([]);
+      setPersonalBenefits([]);
+      setOwnedBenefits([]);
       const unsubAdmin = onSnapshot(
         query(collection(db, 'benefits')),
         (snapshot) => {
@@ -881,7 +633,7 @@ function AppContent() {
               ...(d.data() as Omit<CustomerBenefit, 'id'>),
             }))
             .sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt));
-          setCloudAdminBenefits(list);
+          setAdminBenefits(list);
         },
         (error) => {
           handleFirestoreError(error, OperationType.LIST, 'benefits');
@@ -890,7 +642,7 @@ function AppContent() {
       return () => unsubAdmin();
     }
 
-    setCloudAdminBenefits([]);
+    setAdminBenefits([]);
     const unsubGlobal = onSnapshot(
       query(collection(db, 'benefits'), where('targetUserId', '==', 'all')),
       (snapshot) => {
@@ -898,7 +650,7 @@ function AppContent() {
           id: d.id,
           ...(d.data() as Omit<CustomerBenefit, 'id'>),
         }));
-        setCloudGlobalBenefits(list);
+        setGlobalBenefits(list);
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, 'benefits');
@@ -906,8 +658,8 @@ function AppContent() {
     );
 
     if (!cloudUser) {
-      setCloudPersonalBenefits([]);
-      setCloudOwnedBenefits([]);
+      setPersonalBenefits([]);
+      setOwnedBenefits([]);
       return () => unsubGlobal();
     }
 
@@ -918,7 +670,7 @@ function AppContent() {
           id: d.id,
           ...(d.data() as Omit<CustomerBenefit, 'id'>),
         }));
-        setCloudPersonalBenefits(list);
+        setPersonalBenefits(list);
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, 'benefits');
@@ -932,7 +684,7 @@ function AppContent() {
           id: d.id,
           ...(d.data() as Omit<CustomerBenefit, 'id'>),
         }));
-        setCloudOwnedBenefits(list);
+        setOwnedBenefits(list);
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, 'benefits');
@@ -944,17 +696,17 @@ function AppContent() {
       unsubPersonal();
       unsubOwned();
     };
-  }, [dbMode, cloudAuthReady, cloudIsAdmin, cloudUser]);
+  }, [cloudAuthReady, isAdmin, cloudUser]);
 
-  // 4g. Real-time Categories (Rubros) Listener (Cloud Mode)
+  // 4g. Real-time Categories (Rubros) Listener (Firestore)
   useEffect(() => {
-    if (dbMode !== 'cloud' || !cloudAuthReady) {
+    if (!cloudAuthReady) {
       setCloudCategories([]);
       return;
     }
 
     const isBootstrappedAdminAccount =
-      cloudIsAdmin &&
+      isAdmin &&
       Boolean(cloudUser?.emailVerified) &&
       cloudUser?.email?.toLowerCase() === 'informaticaurquiza@gmail.com';
 
@@ -993,11 +745,11 @@ function AppContent() {
     );
 
     return () => unsubscribe();
-  }, [dbMode, cloudAuthReady, cloudIsAdmin, cloudUser]);
+  }, [cloudAuthReady, isAdmin, cloudUser]);
 
-  const cloudAllBenefits = useMemo(() => {
-    if (cloudIsAdmin) return cloudAdminBenefits;
-    const merged = [...cloudOwnedBenefits, ...cloudPersonalBenefits, ...cloudGlobalBenefits];
+  const benefits = useMemo(() => {
+    if (isAdmin) return adminBenefits;
+    const merged = [...ownedBenefits, ...personalBenefits, ...globalBenefits];
     const uniqueMap = new Map<string, CustomerBenefit>();
     for (const item of merged) {
       uniqueMap.set(item.id, item);
@@ -1005,16 +757,10 @@ function AppContent() {
     return Array.from(uniqueMap.values()).sort(
       (a, b) => getMillis(b.createdAt) - getMillis(a.createdAt),
     );
-  }, [
-    cloudIsAdmin,
-    cloudAdminBenefits,
-    cloudOwnedBenefits,
-    cloudPersonalBenefits,
-    cloudGlobalBenefits,
-  ]);
+  }, [isAdmin, adminBenefits, ownedBenefits, personalBenefits, globalBenefits]);
 
-  const cloudAllNotifications = useMemo(() => {
-    const merged = [...cloudPersonalNotifications, ...cloudBroadcastNotifications];
+  const notifications = useMemo(() => {
+    const merged = [...personalNotifications, ...broadcastNotifications];
     const uniqueMap = new Map<string, AppNotification>();
     for (const item of merged) {
       uniqueMap.set(item.id, item);
@@ -1022,16 +768,15 @@ function AppContent() {
     return Array.from(uniqueMap.values()).sort(
       (a, b) => getMillis(b.createdAt) - getMillis(a.createdAt),
     );
-  }, [cloudPersonalNotifications, cloudBroadcastNotifications]);
+  }, [personalNotifications, broadcastNotifications]);
 
-  // Unified active state based on current dbMode
   const activeUser: AppUser | null = useMemo(
-    () => (dbMode === 'local' ? localUser : toAppUserFromFirebase(cloudUser)),
-    [dbMode, localUser, cloudUser],
+    () => toAppUserFromFirebase(cloudUser),
+    [cloudUser],
   );
   const idleExpiringRef = useRef(false);
 
-  // Automatic 1-hour inactivity session expiration (Cloud + PC Local / LAN)
+  // Automatic 1-hour inactivity session expiration (Firebase Auth)
   useEffect(() => {
     if (!activeUser) {
       idleExpiringRef.current = false;
@@ -1039,7 +784,6 @@ function AppContent() {
     }
 
     let timeoutId: number | null = null;
-    let lastLocalTouchAt = 0;
     let lastActivityThrottleAt = 0;
 
     const triggerIdleExpiration = async () => {
@@ -1052,20 +796,7 @@ function AppContent() {
       setActiveView((curr) => (curr === 'admin' ? 'catalog' : curr));
 
       try {
-        if (dbMode === 'local') {
-          await logoutLocalAccount();
-          setLocalUser(null);
-          setLocalProfile(null);
-          setLocalIsAdmin(false);
-          setLocalOrders([]);
-          setLocalAccounts([]);
-          setLocalDeliveryAgents([]);
-          setLocalSubscriptionPayments([]);
-          setLocalNotifications([]);
-          await loadLocalData();
-        } else {
-          await signOut(auth);
-        }
+        await signOut(auth);
       } catch {
         // ignore errors during forced idle sign-out
       } finally {
@@ -1120,15 +851,6 @@ function AppContent() {
 
       writeLastSessionActivity(now);
       scheduleExpirationCheck();
-
-      if (dbMode === 'local' && now - lastLocalTouchAt >= LOCAL_SESSION_TOUCH_INTERVAL_MS) {
-        lastLocalTouchAt = now;
-        void touchLocalSession().then((ok) => {
-          if (!ok && !idleExpiringRef.current) {
-            void triggerIdleExpiration();
-          }
-        });
-      }
     };
 
     const handleVisibilityChange = () => {
@@ -1176,36 +898,23 @@ function AppContent() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('storage', handleStorageSync);
     };
-  }, [activeUser?.uid, dbMode, loadLocalData, showToast]);
-  const activeProfile = dbMode === 'local' ? localProfile : cloudProfile;
-  const activeIsAdmin = dbMode === 'local' ? localIsAdmin : cloudIsAdmin;
-  const activeProducts = dbMode === 'local' ? localProducts : cloudProducts;
-  const activeProductsLoading = dbMode === 'local' ? localProductsLoading : cloudProductsLoading;
-  const activeOrders = dbMode === 'local' ? localOrders : cloudOrders;
-  const activeAccounts = dbMode === 'local' ? localAccounts : cloudAccounts;
-  const activeDeliveryAgents = useMemo(() => {
+  }, [activeUser?.uid, showToast]);
+
+  const deliveryAgents = useMemo(() => {
     if (!activeUser) return [];
-    const source = dbMode === 'local' ? localDeliveryAgents : cloudDeliveryAgents;
-    return source.filter(
-      (agent) => agent.ownerId === activeUser.uid || (activeIsAdmin && !agent.ownerId),
+    return cloudDeliveryAgents.filter(
+      (agent) => agent.ownerId === activeUser.uid || (isAdmin && !agent.ownerId),
     );
-  }, [activeUser, activeIsAdmin, dbMode, localDeliveryAgents, cloudDeliveryAgents]);
-  const activeBenefits = dbMode === 'local' ? localBenefits : cloudAllBenefits;
-  const activeSubscriptionPayments =
-    dbMode === 'local' ? localSubscriptionPayments : cloudSubscriptionPayments;
-  const activeNotifications = dbMode === 'local' ? localNotifications : cloudAllNotifications;
-  const activeShippingSettings =
-    dbMode === 'local' ? localShippingSettings : cloudShippingSettings;
+  }, [activeUser, isAdmin, cloudDeliveryAgents]);
 
   const activeCategories = useMemo(() => {
-    const raw = dbMode === 'local' ? localCategories : cloudCategories;
-    const source = raw.length > 0 ? raw : CATEGORIES;
+    const source = cloudCategories.length > 0 ? cloudCategories : CATEGORIES;
     return [...source].sort((a, b) => {
       const orderDiff = (a.sortOrder ?? 999) - (b.sortOrder ?? 999);
       if (orderDiff !== 0) return orderDiff;
       return a.label.localeCompare(b.label, 'es');
     });
-  }, [dbMode, localCategories, cloudCategories]);
+  }, [cloudCategories]);
 
   const catalogCategories = useMemo(
     () => activeCategories.filter((c) => c.active !== false),
@@ -1224,14 +933,14 @@ function AppContent() {
 
   // Storefront catalog hides paused products and products of expired/inactive sellers
   const storefrontProducts = useMemo(() => {
-    const accountById = new Map(activeAccounts.map((a) => [a.uid, a]));
+    const accountById = new Map(accounts.map((a) => [a.uid, a]));
     const currentSellerInactive =
-      !activeIsAdmin &&
+      !isAdmin &&
       Boolean(activeUser) &&
-      Boolean(activeProfile) &&
-      !getAccountSubscriptionInfo(activeProfile).isActive;
+      Boolean(profile) &&
+      !getAccountSubscriptionInfo(profile).isActive;
 
-    return activeProducts.filter((p) => {
+    return products.filter((p) => {
       if (!p.active) return false;
       if (p.sellerId) {
         if (currentSellerInactive && activeUser && p.sellerId === activeUser.uid) {
@@ -1244,46 +953,14 @@ function AppContent() {
       }
       return true;
     });
-  }, [activeProducts, activeAccounts, activeIsAdmin, activeUser, activeProfile]);
+  }, [products, accounts, isAdmin, activeUser, profile]);
 
-  const unreadCount = useMemo(() => {
-    if (dbMode === 'local') {
-      if (!localUser) return 0;
-      return localNotifications.filter((n) => n.userId === localUser.uid && !n.read).length;
-    }
-    return cloudPersonalNotifications.filter((n) => !n.read).length;
-  }, [dbMode, localUser, localNotifications, cloudPersonalNotifications]);
+  const unreadCount = useMemo(
+    () => personalNotifications.filter((n) => !n.read).length,
+    [personalNotifications],
+  );
 
-  // Mode Switch Handler
-  async function handleChangeDbMode(nextMode: DatabaseMode) {
-    if (nextMode === dbMode) return;
-    userChangedDbModeRef.current = true;
-    if (nextMode === 'local') {
-      const info = localServerInfo?.available ? localServerInfo : await fetchLocalServerInfo();
-      if (!info?.available) {
-        showToast('El servidor PC Local no está activo en este momento.');
-        return;
-      }
-      setLocalServerInfo(info);
-    }
-
-    setActiveDatabaseMode(nextMode);
-    setDbMode(nextMode);
-    setTrackedOrderId(null);
-    try {
-      window.localStorage.setItem(DB_MODE_STORAGE_KEY, nextMode);
-    } catch {
-      // ignore storage errors
-    }
-
-    showToast(
-      nextMode === 'local'
-        ? 'Conectado a base de datos PC Local / Red (LAN).'
-        : 'Conectado a base de datos en la Nube (Firebase).',
-    );
-  }
-
-  // Auth Handlers
+  // Firebase Auth Handlers
   async function handleSignInGoogle(optionalSignupData?: {
     isRegister?: boolean;
     displayName?: string;
@@ -1292,42 +969,19 @@ function AppContent() {
     bankCbuCvu?: string;
     bankAlias?: string;
     bankAccountHolder?: string;
-  }): Promise<{ switchedToLocal?: boolean; unauthorizedDomain?: string }> {
+  }): Promise<{ unauthorizedDomain?: string }> {
     writeLastSessionActivity(Date.now());
     let credential;
     try {
       credential = await signInWithPopup(auth, googleProvider);
     } catch (err) {
       if (isFirebaseUnauthorizedDomainError(err)) {
-        const info = localServerInfo?.available ? localServerInfo : await fetchLocalServerInfo();
-        if (info?.available) {
-          setLocalServerInfo(info);
-          setActiveDatabaseMode('local');
-          setDbMode('local');
-          setTrackedOrderId(null);
-          try {
-            window.localStorage.setItem(DB_MODE_STORAGE_KEY, 'local');
-          } catch {
-            // ignore storage errors
-          }
-          showToast('Usá la opción de Cuenta local para ingresar desde esta red.');
-          return { switchedToLocal: true };
-        }
         return { unauthorizedDomain: window.location.hostname };
       }
       throw err;
     }
 
-    // Google Sign-In succeeded: activate Cloud mode seamlessly
-    userChangedDbModeRef.current = true;
-    setActiveDatabaseMode('cloud');
-    setDbMode('cloud');
     setTrackedOrderId(null);
-    try {
-      window.localStorage.setItem(DB_MODE_STORAGE_KEY, 'cloud');
-    } catch {
-      // ignore storage errors
-    }
 
     const cleanProfileUpdates = {
       ...(optionalSignupData?.displayName?.trim()
@@ -1354,12 +1008,12 @@ function AppContent() {
         checkIsAdmin(credential.user),
         ensureUserProfile(credential.user),
       ]);
-      setCloudIsAdmin(adminFlag);
+      setIsAdmin(adminFlag);
       if (Object.keys(cleanProfileUpdates).length > 0) {
         await firestoreUpdateUserProfile(credential.user.uid, cleanProfileUpdates);
-        setCloudProfile({ ...ensured, ...cleanProfileUpdates });
+        setProfile({ ...ensured, ...cleanProfileUpdates });
       } else {
-        setCloudProfile(ensured);
+        setProfile(ensured);
       }
       setCloudAuthReady(true);
     }
@@ -1373,31 +1027,7 @@ function AppContent() {
     return {};
   }
 
-  async function handleSetupLocalAdmin(input: {
-    email: string;
-    displayName: string;
-    businessName?: string;
-    password: string;
-  }) {
-    const res = await setupLocalAdmin(input);
-    userChangedDbModeRef.current = true;
-    setActiveDatabaseMode('local');
-    setDbMode('local');
-    setTrackedOrderId(null);
-    try {
-      window.localStorage.setItem(DB_MODE_STORAGE_KEY, 'local');
-    } catch {
-      // ignore storage errors
-    }
-    setLocalUser(res.user);
-    setLocalProfile(res.profile);
-    setLocalIsAdmin(res.isAdmin);
-    writeLastSessionActivity(Date.now());
-    await Promise.all([loadLocalData(), refreshLocalServerInfo()]);
-    showToast('Cuenta administradora local creada y sesión iniciada.');
-  }
-
-  async function handleLoginLocal(input: {
+  async function handleLoginEmail(input: {
     email: string;
     password: string;
     resendVerification?: boolean;
@@ -1407,33 +1037,6 @@ function AppContent() {
     emailNotVerified?: boolean;
     email?: string;
   }> {
-    const info = localServerInfo?.available ? localServerInfo : await fetchLocalServerInfo();
-    if (info?.available) {
-      setLocalServerInfo(info);
-      const res = await loginLocalAccount({
-        email: input.email,
-        password: input.password,
-      });
-      userChangedDbModeRef.current = true;
-      setActiveDatabaseMode('local');
-      setDbMode('local');
-      setTrackedOrderId(null);
-      try {
-        window.localStorage.setItem(DB_MODE_STORAGE_KEY, 'local');
-      } catch {
-        // ignore storage errors
-      }
-      setLocalUser(res.user);
-      setLocalProfile(res.profile);
-      setLocalIsAdmin(res.isAdmin);
-      writeLastSessionActivity(Date.now());
-      await loadLocalData();
-      showToast('Sesión local iniciada correctamente.');
-      return {};
-    }
-
-    // Fallback when running without the local PC server (e.g. static web deploy):
-    // authenticate via Firebase Email/Password so users can still sign in with email + password.
     try {
       writeLastSessionActivity(Date.now());
       const cleanEmail = input.email.trim();
@@ -1450,23 +1053,14 @@ function AppContent() {
         };
       }
 
-      userChangedDbModeRef.current = true;
-      setActiveDatabaseMode('cloud');
-      setDbMode('cloud');
       setTrackedOrderId(null);
-      try {
-        window.localStorage.setItem(DB_MODE_STORAGE_KEY, 'cloud');
-      } catch {
-        // ignore storage errors
-      }
-
       setCloudUser(credential.user);
       const [adminFlag, ensured] = await Promise.all([
         checkIsAdmin(credential.user),
         ensureUserProfile(credential.user),
       ]);
-      setCloudIsAdmin(adminFlag);
-      setCloudProfile(ensured);
+      setIsAdmin(adminFlag);
+      setProfile(ensured);
       setCloudAuthReady(true);
       writeLastSessionActivity(Date.now());
       showToast('Sesión iniciada correctamente.');
@@ -1480,7 +1074,7 @@ function AppContent() {
     }
   }
 
-  async function handleRegisterLocal(input: {
+  async function handleRegisterEmail(input: {
     email: string;
     displayName: string;
     businessName?: string;
@@ -1494,29 +1088,6 @@ function AppContent() {
     verificationSent?: boolean;
     email?: string;
   }> {
-    const info = localServerInfo?.available ? localServerInfo : await fetchLocalServerInfo();
-    if (info?.available) {
-      setLocalServerInfo(info);
-      const res = await registerLocalCustomer(input);
-      userChangedDbModeRef.current = true;
-      setActiveDatabaseMode('local');
-      setDbMode('local');
-      setTrackedOrderId(null);
-      try {
-        window.localStorage.setItem(DB_MODE_STORAGE_KEY, 'local');
-      } catch {
-        // ignore storage errors
-      }
-      setLocalUser(res.user);
-      setLocalProfile(res.profile);
-      setLocalIsAdmin(res.isAdmin);
-      writeLastSessionActivity(Date.now());
-      await Promise.all([loadLocalData(), refreshLocalServerInfo()]);
-      showToast('Cuenta local registrada e iniciada.');
-      return {};
-    }
-
-    // Fallback when running without the local PC server: register via Firebase Email/Password.
     try {
       const cleanEmail = input.email.trim();
       const credential = await createUserWithEmailAndPassword(auth, cleanEmail, input.password);
@@ -1538,30 +1109,20 @@ function AppContent() {
 
   async function handleRequestPasswordReset(input: {
     email: string;
-    channel: 'local' | 'cloud';
-  }): Promise<{ mode?: 'local' | 'cloud'; email?: string; emailPasswordDisabled?: boolean }> {
+  }): Promise<{ email?: string; emailPasswordDisabled?: boolean }> {
     const cleanEmail = input.email.trim();
     if (!cleanEmail || !cleanEmail.includes('@')) {
       throw new Error('Ingresá un correo electrónico válido.');
     }
 
-    if (input.channel === 'local') {
-      const info = localServerInfo?.available ? localServerInfo : await fetchLocalServerInfo();
-      if (info?.available) {
-        setLocalServerInfo(info);
-        await localRequestPasswordReset(cleanEmail);
-        return { mode: 'local', email: cleanEmail };
-      }
-    }
-
     try {
       await sendPasswordResetEmail(auth, cleanEmail);
-      return { mode: 'cloud', email: cleanEmail };
+      return { email: cleanEmail };
     } catch (err) {
       const code = getFirebaseAuthErrorCode(err);
       if (code === 'auth/user-not-found') {
         // Neutral response to avoid account enumeration
-        return { mode: 'cloud', email: cleanEmail };
+        return { email: cleanEmail };
       }
       if (code === 'auth/operation-not-allowed') {
         return { emailPasswordDisabled: true };
@@ -1570,31 +1131,8 @@ function AppContent() {
     }
   }
 
-  async function handleConfirmLocalPasswordReset(input: {
-    email: string;
-    code: string;
-    newPassword: string;
-  }): Promise<void> {
-    await localConfirmPasswordReset(input);
-    showToast('Contraseña restablecida correctamente. Ya podés ingresar.');
-  }
-
   async function handleSignOut() {
     clearLastSessionActivity();
-    if (dbMode === 'local') {
-      await logoutLocalAccount();
-      setLocalUser(null);
-      setLocalProfile(null);
-      setLocalIsAdmin(false);
-      setLocalOrders([]);
-      setLocalAccounts([]);
-      setLocalDeliveryAgents([]);
-      setLocalSubscriptionPayments([]);
-      setLocalNotifications([]);
-      await loadLocalData();
-      showToast('Cerraste tu sesión local correctamente.');
-      return;
-    }
     await signOut(auth);
     showToast('Cerraste sesión correctamente.');
   }
@@ -1693,7 +1231,7 @@ function AppContent() {
         cartCount={cartCount}
         unreadNotifications={unreadCount}
         user={activeUser}
-        isAdmin={activeIsAdmin}
+        isAdmin={isAdmin}
         onOpenCart={() => setCartOpen(true)}
         onOpenAccount={() => setAccountOpen(true)}
         onOpenMobileCategories={() => setMobileSidebarOpen(true)}
@@ -1704,9 +1242,9 @@ function AppContent() {
           <StorefrontView
             categories={catalogCategories}
             products={storefrontProducts}
-            loading={activeProductsLoading}
-            shippingSettings={activeShippingSettings}
-            benefits={activeBenefits}
+            loading={productsLoading}
+            shippingSettings={shippingSettings}
+            benefits={benefits}
             user={activeUser}
             activePromoCode={promoCode}
             onApplyPromoCode={(code) => {
@@ -1727,10 +1265,10 @@ function AppContent() {
         {activeView === 'tracking' && (
           <ShipmentTrackingView
             user={activeUser}
-            isAdmin={activeIsAdmin}
-            orders={activeOrders}
-            products={activeProducts}
-            deliveryAgents={activeDeliveryAgents}
+            isAdmin={isAdmin}
+            orders={orders}
+            products={products}
+            deliveryAgents={deliveryAgents}
             initialSelectedOrderId={trackedOrderId}
             onRequireSignIn={() => setAccountOpen(true)}
             onNotifyToast={showToast}
@@ -1740,10 +1278,10 @@ function AppContent() {
         {activeView === 'notifications' && (
           <NotificationsView
             user={activeUser}
-            isAdmin={activeIsAdmin}
-            notifications={activeNotifications}
-            benefits={activeBenefits}
-            accounts={activeAccounts}
+            isAdmin={isAdmin}
+            notifications={notifications}
+            benefits={benefits}
+            accounts={accounts}
             activePromoCode={promoCode}
             onApplyPromoCode={(code) => {
               setPromoCode(code);
@@ -1763,25 +1301,18 @@ function AppContent() {
         {activeView === 'admin' && (
           <AdminDashboardView
             user={activeUser}
-            profile={activeProfile}
-            isAdmin={activeIsAdmin}
-            dbMode={dbMode}
-            onChangeDbMode={(mode) => void handleChangeDbMode(mode)}
-            localServerInfo={localServerInfo}
-            onRefreshServerInfo={refreshLocalServerInfo}
-            onRefreshLocalData={dbMode === 'local' ? loadLocalData : undefined}
+            profile={profile}
+            isAdmin={isAdmin}
             categories={activeCategories}
-            products={activeProducts}
-            orders={activeOrders}
-            accounts={activeAccounts}
-            benefits={activeBenefits}
-            subscriptionPayments={activeSubscriptionPayments}
-            shippingSettings={activeShippingSettings}
+            products={products}
+            orders={orders}
+            accounts={accounts}
+            benefits={benefits}
+            subscriptionPayments={subscriptionPayments}
+            shippingSettings={shippingSettings}
             onRequireSignIn={() => setAccountOpen(true)}
             onProfileSaved={(updates) => {
-              if (dbMode === 'cloud') {
-                setCloudProfile((prev) => (prev ? { ...prev, ...updates } : prev));
-              }
+              setProfile((prev) => (prev ? { ...prev, ...updates } : prev));
             }}
             onNotifyToast={showToast}
           />
@@ -1794,7 +1325,7 @@ function AppContent() {
           <div className="flex items-center gap-3">
             <span className="font-display font-bold text-zinc-950">Infourqui Mercado</span>
             <span>·</span>
-            <span>Comercio electrónico con inventario y logística sincronizados</span>
+            <span>Comercio electrónico sincronizado en la nube con Firebase Firestore</span>
           </div>
           <div className="flex items-center gap-6">
             <button
@@ -1834,8 +1365,8 @@ function AppContent() {
         open={cartOpen}
         onClose={() => setCartOpen(false)}
         items={cart}
-        shippingSettings={activeShippingSettings}
-        benefits={activeBenefits}
+        shippingSettings={shippingSettings}
+        benefits={benefits}
         user={activeUser}
         onUpdateQuantity={handleUpdateCartQty}
         onRemoveItem={handleRemoveCartItem}
@@ -1851,11 +1382,11 @@ function AppContent() {
         open={checkoutOpen}
         onClose={() => setCheckoutOpen(false)}
         items={cart}
-        shippingSettings={activeShippingSettings}
-        benefits={activeBenefits}
+        shippingSettings={shippingSettings}
+        benefits={benefits}
         promoCode={promoCode}
         user={activeUser}
-        profile={activeProfile}
+        profile={profile}
         onRequireSignIn={() => setAccountOpen(true)}
         onOpenAccount={() => {
           setCheckoutOpen(false);
@@ -1874,23 +1405,15 @@ function AppContent() {
       <AccountModal
         open={accountOpen}
         onClose={() => setAccountOpen(false)}
-        dbMode={dbMode}
-        onChangeDbMode={(mode) => void handleChangeDbMode(mode)}
-        localServerInfo={localServerInfo}
-        onRefreshLocalServerInfo={refreshLocalServerInfo}
         user={activeUser}
-        profile={activeProfile}
-        isAdmin={activeIsAdmin}
+        profile={profile}
+        isAdmin={isAdmin}
         onSignInGoogle={handleSignInGoogle}
-        onSetupLocalAdmin={handleSetupLocalAdmin}
-        onLoginLocal={handleLoginLocal}
-        onRegisterLocal={handleRegisterLocal}
+        onLoginEmail={handleLoginEmail}
+        onRegisterEmail={handleRegisterEmail}
         onRequestPasswordReset={handleRequestPasswordReset}
-        onConfirmLocalPasswordReset={handleConfirmLocalPasswordReset}
         onProfileSaved={(updates) => {
-          if (dbMode === 'cloud') {
-            setCloudProfile((prev) => (prev ? { ...prev, ...updates } : prev));
-          }
+          setProfile((prev) => (prev ? { ...prev, ...updates } : prev));
         }}
         onSignOut={handleSignOut}
         pushPermission={pushPermission}

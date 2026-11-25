@@ -341,52 +341,6 @@ export interface AppUser {
   emailVerified: boolean;
 }
 
-export type DatabaseMode = 'cloud' | 'local';
-
-export type CloudflareTunnelPhase =
-  | 'idle'
-  | 'installing'
-  | 'awaiting_browser_auth'
-  | 'starting'
-  | 'active'
-  | 'error';
-
-export interface CloudflareTunnelStatus {
-  installed: boolean;
-  binaryPath?: string;
-  accountAuthorized: boolean;
-  chromeDetected?: boolean;
-  chromeOpened?: boolean;
-  defaultBrowserOpened?: boolean;
-  phase: CloudflareTunnelPhase;
-  authUrl?: string;
-  publicUrl?: string;
-  startedAt?: string;
-  message?: string;
-  error?: string;
-}
-
-export interface LocalServerInfo {
-  available: boolean;
-  networkMode: 'local' | 'lan';
-  standalonePcMode?: boolean;
-  host: string;
-  port: number;
-  localUrl: string;
-  lanUrls: string[];
-  cloudflarePublicUrl?: string;
-  cloudflarePhase?: CloudflareTunnelPhase;
-  dbFileName: string;
-  adminClaimed: boolean;
-  envAdminConfigured: boolean;
-  counts: {
-    products: number;
-    orders: number;
-    notifications: number;
-    users: number;
-  };
-}
-
 export type ActiveView = 'catalog' | 'tracking' | 'notifications' | 'admin';
 export type AdminTab =
   | 'analytics'
@@ -397,29 +351,18 @@ export type AdminTab =
   | 'push'
   | 'subscription'
   | 'accounts'
-  | 'backups'
-  | 'database';
+  | 'backups';
 
 export type RestoreMode = 'replace' | 'merge';
 
 export interface DatabaseBackupPayload {
   version: number;
   exportedAt: string;
-  sourceMode: 'local' | 'lan' | 'cloud';
+  sourceMode: 'cloud' | 'local' | 'lan';
   products: Product[];
   orders: Order[];
   notifications: AppNotification[];
   shippingSettings: StoreSettings;
-}
-
-export interface LocalBackupSnapshotMeta {
-  fileName: string;
-  createdAt: string;
-  sizeBytes: number;
-  sourceMode: string;
-  productsCount: number;
-  ordersCount: number;
-  notificationsCount: number;
 }
 
 export interface RestoreSummary {
@@ -427,7 +370,6 @@ export interface RestoreSummary {
   orders: number;
   notifications: number;
   shippingSettings: boolean;
-  safetyBackupFile?: string;
 }
 
 export const SHIPMENT_PIPELINE: {

@@ -1,25 +1,19 @@
 import { useMemo, useState } from 'react';
 import {
   Banknote,
-  Check,
   CheckCircle2,
   Clock,
-  Copy,
   FileCheck2,
-  Info,
-  KeyRound,
   Landmark,
   Power,
   Search,
   ShieldCheck,
   UserCheck,
-  UserPlus,
   UserX,
   X,
   XCircle,
 } from 'lucide-react';
 import {
-  SELLER_TRIAL_NOTICE,
   formatCurrency,
   formatDateTime,
   formatShortDate,
@@ -29,13 +23,8 @@ import {
   adminRejectSubscriptionPayment,
   adminSetAccountStatus,
 } from '../services/dataService';
-import {
-  localAdminCreateCustomer,
-  localAdminGenerateRecoveryCode,
-} from '../services/localApiService';
 import type {
   AppUser,
-  DatabaseMode,
   Product,
   SubscriptionPayment,
   UserProfile,
@@ -43,52 +32,26 @@ import type {
 
 interface AdminAccountsPanelProps {
   adminUser: AppUser;
-  dbMode: DatabaseMode;
   accounts: UserProfile[];
   subscriptionPayments: SubscriptionPayment[];
   products: Product[];
   onNotifyToast: (msg: string) => void;
-  onRefreshLocalData?: () => Promise<void>;
 }
 
 type AccountFilter = 'all' | 'active' | 'inactive' | 'pending_receipt';
 
 export function AdminAccountsPanel({
   adminUser,
-  dbMode,
   accounts,
   subscriptionPayments,
   products,
   onNotifyToast,
-  onRefreshLocalData,
 }: AdminAccountsPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<AccountFilter>('all');
   const [busyUid, setBusyUid] = useState<string | null>(null);
   const [busyPaymentId, setBusyPaymentId] = useState<string | null>(null);
   const [inspectingUid, setInspectingUid] = useState<string | null>(null);
-
-  // Create Local Client modal state
-  const [createClientOpen, setCreateClientOpen] = useState(false);
-  const [clientName, setClientName] = useState('');
-  const [clientBusiness, setClientBusiness] = useState('');
-  const [clientPhone, setClientPhone] = useState('');
-  const [clientEmail, setClientEmail] = useState('');
-  const [clientPassword, setClientPassword] = useState('');
-  const [clientBankCbu, setClientBankCbu] = useState('');
-  const [clientBankAlias, setClientBankAlias] = useState('');
-  const [clientBankHolder, setClientBankHolder] = useState('');
-  const [creatingClient, setCreatingClient] = useState(false);
-  const [createClientError, setCreateClientError] = useState('');
-
-  // Local password recovery code banner state
-  const [recoveryResult, setRecoveryResult] = useState<{
-    email: string;
-    name: string;
-    code: string;
-    expiresInMinutes: number;
-  } | null>(null);
-  const [copiedRecoveryCode, setCopiedRecoveryCode] = useState(false);
 
   const enrichedAccounts = useMemo(() => {
     return accounts
@@ -167,9 +130,6 @@ export function AdminAccountsPanel({
         allPayments: subscriptionPayments,
         allProducts: products,
       });
-      if (onRefreshLocalData) {
-        await onRefreshLocalData();
-      }
       onNotifyToast(
         action === 'activate'
           ? `Cuenta de ${targetUser.displayName || targetUser.email} activada por 30 días y publicaciones habilitadas.`
@@ -188,9 +148,6 @@ export function AdminAccountsPanel({
     setBusyPaymentId(payment.id);
     try {
       await adminRejectSubscriptionPayment(payment, adminUser);
-      if (onRefreshLocalData) {
-        await onRefreshLocalData();
-      }
       onNotifyToast('Comprobante marcado como rechazado y notificación enviada al cliente.');
     } catch (err) {
       onNotifyToast(
@@ -198,66 +155,6 @@ export function AdminAccountsPanel({
       );
     } finally {
       setBusyPaymentId(null);
-    }
-  }
-
-  async function handleCreateLocalClient(e: React.FormEvent) {
-    e.preventDefault();
-    setCreateClientError('');
-    setCreatingClient(true);
-    try {
-      const created = await localAdminCreateCustomer({
-        displayName: clientName,
-        businessName: clientBusiness,
-        phone: clientPhone,
-        email: clientEmail,
-        password: clientPassword,
-        bankCbuCvu: clientBankCbu,
-        bankAlias: clientBankAlias,
-        bankAccountHolder: clientBankHolder,
-      });
-      if (onRefreshLocalData) {
-        await onRefreshLocalData();
-      }
-      setCreateClientOpen(false);
-      setClientName('');
-      setClientBusiness('');
-      setClientPhone('');
-      setClientEmail('');
-      setClientPassword('');
-      setClientBankCbu('');
-      setClientBankAlias('');
-      setClientBankHolder('');
-      onNotifyToast(
-        `Cliente ${created.displayName || created.email} creado con 30 días de prueba gratis.`,
-      );
-    } catch (err) {
-      setCreateClientError(
-        err instanceof Error ? err.message : 'No pudimos crear la cuenta del cliente.',
-      );
-    } finally {
-      setCreatingClient(false);
-    }
-  }
-
-  async function handleGenerateRecoveryCode(targetUser: UserProfile) {
-    setBusyUid(targetUser.uid);
-    try {
-      const res = await localAdminGenerateRecoveryCode(targetUser.uid);
-      setRecoveryResult({
-        email: res.email,
-        name: targetUser.displayName || res.email,
-        code: res.code,
-        expiresInMinutes: res.expiresInMinutes,
-      });
-      setCopiedRecoveryCode(false);
-      onNotifyToast(`Código de recuperación generado para ${res.email} (válido ${res.expiresInMinutes} min).`);
-    } catch (err) {
-      onNotifyToast(
-        err instanceof Error ? err.message : 'No pudimos generar el código de recuperación.',
-      );
-    } finally {
-      setBusyUid(null);
     }
   }
 
@@ -353,62 +250,7 @@ export function AdminAccountsPanel({
               inactivos o con período de 30 días vencido.
             </p>
           </div>
-          {dbMode === 'local' && (
-            <button
-              type="button"
-              onClick={() => {
-                setCreateClientError('');
-                setCreateClientOpen(true);
-              }}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-zinc-950 hover:bg-blue-700 rounded-lg transition-colors cursor-pointer"
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-              <span>Nuevo cliente local</span>
-            </button>
-          )}
         </div>
-
-        {recoveryResult && (
-          <div className="mx-6 mt-4 p-4 rounded-xl bg-blue-50 border border-blue-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-blue-950">
-            <div className="space-y-1">
-              <p className="font-semibold flex items-center gap-1.5">
-                <KeyRound className="w-4 h-4 text-blue-700 shrink-0" />
-                Código de recuperación para {recoveryResult.name} ({recoveryResult.email})
-              </p>
-              <p className="text-blue-900">
-                Compartí este código de un solo uso (válido por {recoveryResult.expiresInMinutes}{' '}
-                minutos) para que el cliente restablezca su contraseña desde{' '}
-                <span className="font-semibold">Ingresar → ¿Olvidaste tu contraseña?</span>:
-              </p>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <code className="px-3 py-1.5 bg-white border border-blue-300 rounded-lg font-mono text-sm font-bold tracking-wider text-zinc-950">
-                {recoveryResult.code}
-              </code>
-              <button
-                type="button"
-                onClick={() => {
-                  void navigator.clipboard?.writeText(recoveryResult.code);
-                  setCopiedRecoveryCode(true);
-                  onNotifyToast('Código copiado al portapapeles.');
-                  window.setTimeout(() => setCopiedRecoveryCode(false), 2000);
-                }}
-                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-zinc-950 hover:bg-blue-700 rounded-lg transition-colors cursor-pointer"
-              >
-                {copiedRecoveryCode ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                {copiedRecoveryCode ? 'Copiado' : 'Copiar'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setRecoveryResult(null)}
-                aria-label="Cerrar código de recuperación"
-                className="p-1.5 text-blue-700 hover:bg-blue-100 rounded-lg cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        )}
 
         {filteredAccounts.length === 0 ? (
           <div className="p-12 text-center text-sm text-zinc-500">
@@ -562,18 +404,6 @@ export function AdminAccountsPanel({
                               </button>
                             )}
 
-                            {dbMode === 'local' && (
-                              <button
-                                type="button"
-                                disabled={isBusy}
-                                onClick={() => void handleGenerateRecoveryCode(account)}
-                                title="Generar código de recuperación de contraseña (15 min)"
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-zinc-800 bg-white border border-zinc-300 hover:border-zinc-950 disabled:opacity-60 rounded-lg transition-colors cursor-pointer"
-                              >
-                                <KeyRound className="w-3.5 h-3.5" />
-                                Clave
-                              </button>
-                            )}
                           </div>
                         )}
                       </td>
@@ -841,170 +671,6 @@ export function AdminAccountsPanel({
                 </div>
               )}
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Create Local Client (Admin) */}
-      {createClientOpen && dbMode === 'local' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div
-            className="fixed inset-0 bg-zinc-950/60 backdrop-blur-[1px]"
-            onClick={() => setCreateClientOpen(false)}
-          />
-          <div className="relative z-10 w-full max-w-md bg-white border border-zinc-200 rounded-xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200">
-              <h3 className="font-display text-base font-bold text-zinc-950">
-                Alta de nuevo cliente local
-              </h3>
-              <button
-                type="button"
-                onClick={() => setCreateClientOpen(false)}
-                aria-label="Cerrar alta de cliente"
-                className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateLocalClient} className="p-6 space-y-3.5 overflow-y-auto">
-              <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 flex items-start gap-2">
-                <Info className="w-4 h-4 text-amber-800 shrink-0 mt-0.5" />
-                <p className="text-xs font-medium text-amber-950 leading-relaxed">
-                  {SELLER_TRIAL_NOTICE}
-                </p>
-              </div>
-
-              {createClientError && (
-                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">
-                  {createClientError}
-                </p>
-              )}
-
-              <div>
-                <label className="block text-xs font-medium text-zinc-700 mb-1">
-                  Nombre completo
-                </label>
-                <input
-                  type="text"
-                  required
-                  minLength={2}
-                  maxLength={100}
-                  value={clientName}
-                  onChange={(e) => setClientName(e.target.value)}
-                  placeholder="Ej. Laura Fernández"
-                  className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-zinc-700 mb-1">
-                  Nombre comercial (opcional)
-                </label>
-                <input
-                  type="text"
-                  maxLength={120}
-                  value={clientBusiness}
-                  onChange={(e) => setClientBusiness(e.target.value)}
-                  placeholder="Ej. Distribuidora Sur"
-                  className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-zinc-700 mb-1">
-                  Teléfono (opcional)
-                </label>
-                <input
-                  type="tel"
-                  maxLength={32}
-                  value={clientPhone}
-                  onChange={(e) => setClientPhone(e.target.value)}
-                  placeholder="+54 11 5555-1234"
-                  className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-zinc-700 mb-1">
-                  Correo electrónico
-                </label>
-                <input
-                  type="email"
-                  required
-                  maxLength={120}
-                  value={clientEmail}
-                  onChange={(e) => setClientEmail(e.target.value)}
-                  placeholder="cliente@correo.com"
-                  className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-zinc-700 mb-1">
-                  Contraseña inicial (mínimo 8 caracteres)
-                </label>
-                <input
-                  type="password"
-                  required
-                  minLength={8}
-                  maxLength={128}
-                  value={clientPassword}
-                  onChange={(e) => setClientPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                />
-              </div>
-
-              <div className="p-3.5 rounded-xl border border-zinc-200 bg-zinc-50/70 space-y-2.5">
-                <p className="text-xs font-semibold text-zinc-900 flex items-center gap-1.5">
-                  <Landmark className="w-3.5 h-3.5 text-blue-700" />
-                  Datos Bancarios (opcional)
-                </p>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={32}
-                  value={clientBankCbu}
-                  onChange={(e) => setClientBankCbu(e.target.value)}
-                  placeholder="CBU o CVU (opcional)"
-                  className="w-full px-3 py-1.5 text-xs font-mono bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                />
-                <input
-                  type="text"
-                  maxLength={60}
-                  value={clientBankAlias}
-                  onChange={(e) => setClientBankAlias(e.target.value)}
-                  placeholder="Alias (opcional)"
-                  className="w-full px-3 py-1.5 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                />
-                <input
-                  type="text"
-                  maxLength={120}
-                  value={clientBankHolder}
-                  onChange={(e) => setClientBankHolder(e.target.value)}
-                  placeholder="Nombre de la cuenta (opcional)"
-                  className="w-full px-3 py-1.5 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-blue-700"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setCreateClientOpen(false)}
-                  className="px-4 py-2 text-xs font-medium text-zinc-600 hover:text-zinc-950 cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={creatingClient}
-                  className="px-4 py-2 text-xs font-semibold text-white bg-zinc-950 hover:bg-blue-700 disabled:opacity-60 rounded-lg cursor-pointer"
-                >
-                  {creatingClient ? 'Creando...' : 'Crear cliente'}
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       )}

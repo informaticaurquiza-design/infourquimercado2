@@ -21,7 +21,6 @@ interface AdminCategoriesPanelProps {
   categories: CategoryDefinition[];
   products: Product[];
   onNotifyToast: (msg: string) => void;
-  onRefreshLocalData?: () => Promise<void>;
 }
 
 export function AdminCategoriesPanel({
@@ -29,7 +28,6 @@ export function AdminCategoriesPanel({
   categories,
   products,
   onNotifyToast,
-  onRefreshLocalData,
 }: AdminCategoriesPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
@@ -161,7 +159,6 @@ export function AdminCategoriesPanel({
         sortOrder: sortOrderValue,
         active: formActive,
       });
-      await onRefreshLocalData?.();
       setModalOpen(false);
       onNotifyToast(
         editingId
@@ -192,7 +189,6 @@ export function AdminCategoriesPanel({
         sortOrder: category.sortOrder ?? 0,
         active: nextActive,
       });
-      await onRefreshLocalData?.();
       onNotifyToast(
         nextActive
           ? `Rubro "${category.label}" activado en el catálogo.`
@@ -223,7 +219,6 @@ export function AdminCategoriesPanel({
     setDeletingId(category.id);
     try {
       await deleteCategoryById(category.id);
-      await onRefreshLocalData?.();
       setConfirmDeleteId(null);
       onNotifyToast(`Rubro "${category.label}" eliminado correctamente.`);
     } catch (err) {

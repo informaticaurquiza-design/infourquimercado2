@@ -12,7 +12,6 @@ import type {
   CategoryDefinition,
   CategoryId,
   CustomerBenefit,
-  DatabaseMode,
   DeliveryAgent,
   DeliveryMethod,
   DeliveryVehicleType,
@@ -50,49 +49,15 @@ import {
   submitCloudSubscriptionPayment,
   updateUserProfile as cloudUpdateUserProfile,
 } from './firestoreService';
-import {
-  localAdjustProductStock,
-  localAdminRejectSubscriptionPayment,
-  localAdminSetAccountStatus,
-  localAdvanceOrderShipmentStatus,
-  localCancelOrder,
-  localChangePassword,
-  localCreateOrUpdateBenefit,
-  localCreateOrUpdateCategory,
-  localCreateOrUpdateDeliveryAgent,
-  localCreateOrUpdateProduct,
-  localCreateOrder,
-  localDeleteBenefit,
-  localDeleteCategory,
-  localDeleteDeliveryAgent,
-  localDeleteNotification,
-  localDeleteProduct,
-  localLookupOrderByCode,
-  localMarkNotificationRead,
-  localRevertOrderShipmentStatus,
-  localSaveShippingSettings,
-  localSendPushNotification,
-  localSubmitSubscriptionPayment,
-  localUpdateUserProfile,
-  parseTransferReceiptImage,
-  type ParsedReceiptInfo,
-} from './localApiService';
 
-let currentDbMode: DatabaseMode = 'cloud';
-let onLocalProfileUpdated: ((payload: { profile: UserProfile; user: AppUser }) => void) | null = null;
-
-export function setActiveDatabaseMode(mode: DatabaseMode): void {
-  currentDbMode = mode;
-}
-
-export function getActiveDatabaseMode(): DatabaseMode {
-  return currentDbMode;
-}
-
-export function registerLocalProfileSyncCallback(
-  cb: ((payload: { profile: UserProfile; user: AppUser }) => void) | null,
-): void {
-  onLocalProfileUpdated = cb;
+export interface ParsedReceiptInfo {
+  operationNumber: string;
+  bankName: string;
+  amountDetected: string;
+  payerName: string;
+  transferDate: string;
+  destinationAccount: string;
+  summary: string;
 }
 
 export interface UnifiedCheckoutOrderInput {
@@ -116,6 +81,18 @@ export interface UnifiedCheckoutOrderInput {
   paymentReceipt?: PaymentReceipt;
 }
 
+export function triggerJsonDownload(jsonContent: string, fileName: string): void {
+  const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function updateUserProfile(
   uid: string,
   updates: Partial<
@@ -134,11 +111,6 @@ export async function updateUserProfile(
     >
   >,
 ): Promise<void> {
-  if (currentDbMode === 'local') {
-    const updated = await localUpdateUserProfile(updates);
-    onLocalProfileUpdated?.(updated);
-    return;
-  }
   await cloudUpdateUserProfile(uid, updates);
 }
 
@@ -152,11 +124,6 @@ export async function changeAccountPassword(
   currentPassword: string,
   newPassword: string,
 ): Promise<void> {
-  if (currentDbMode === 'local') {
-    await localChangePassword({ currentPassword, newPassword });
-    return;
-  }
-
   const currentUser = auth.currentUser;
   if (!currentUser || !currentUser.email) {
     throw new Error('Iniciá sesión nuevamente para cambiar tu contraseña.');
@@ -185,7 +152,9 @@ export async function changeAccountPassword(
       throw new Error('La nueva contraseña es demasiado débil. Usá al menos 8 caracteres.');
     }
     if (code === 'auth/requires-recent-login') {
-      throw new Error('Por seguridad, cerrá sesión e ingresá nuevamente antes de cambiar la contraseña.');
+      throw new Error(
+        'Por seguridad, cerrá sesión e ingresá nuevamente antes de cambiar la contraseña.',
+      );
     }
     throw new Error(
       err instanceof Error ? err.message : 'No pudimos actualizar la contraseña.',
@@ -196,9 +165,6 @@ export async function changeAccountPassword(
 export async function createOrderWithInventoryUpdate(
   input: UnifiedCheckoutOrderInput,
 ): Promise<Order> {
-  if (currentDbMode === 'local') {
-    return localCreateOrder(input);
-  }
   return cloudCreateOrderWithInventoryUpdate(input);
 }
 
@@ -228,26 +194,14 @@ export async function createOrUpdateProduct(productInput: {
   sellerBankCbuCvu?: string;
   sellerBankAccountHolder?: string;
 }): Promise<void> {
-  if (currentDbMode === 'local') {
-    await localCreateOrUpdateProduct(productInput);
-    return;
-  }
   await cloudCreateOrUpdateProduct(productInput);
 }
 
 export async function adjustProductStock(productId: string, newStock: number): Promise<void> {
-  if (currentDbMode === 'local') {
-    await localAdjustProductStock(productId, newStock);
-    return;
-  }
   await cloudAdjustProductStock(productId, newStock);
 }
 
 export async function deleteProductById(productId: string): Promise<void> {
-  if (currentDbMode === 'local') {
-    await localDeleteProduct(productId);
-    return;
-  }
   await cloudDeleteProductById(productId);
 }
 
@@ -258,24 +212,10 @@ export async function advanceOrderShipmentStatus(
   note: string,
   assignedCourier?: AssignedCourier,
 ): Promise<void> {
-  if (currentDbMode === 'local') {
-    await localAdvanceOrderShipmentStatus(
-      order.id,
-      nextStatus,
-      location,
-      note,
-      assignedCourier,
-    );
-    return;
-  }
   await cloudAdvanceOrderShipmentStatus(order, nextStatus, location, note, assignedCourier);
 }
 
 export async function revertOrderShipmentStatus(order: Order): Promise<void> {
-  if (currentDbMode === 'local') {
-    await localRevertOrderShipmentStatus(order.id);
-    return;
-  }
   await cloudRevertOrderShipmentStatus(order);
 }
 
@@ -286,17 +226,10 @@ export async function createOrUpdateDeliveryAgent(input: {
   fullName: string;
   active: boolean;
 }): Promise<DeliveryAgent> {
-  if (currentDbMode === 'local') {
-    return localCreateOrUpdateDeliveryAgent(input);
-  }
   return cloudCreateOrUpdateDeliveryAgent(input);
 }
 
 export async function deleteDeliveryAgentById(agentId: string): Promise<void> {
-  if (currentDbMode === 'local') {
-    await localDeleteDeliveryAgent(agentId);
-    return;
-  }
   await cloudDeleteDeliveryAgentById(agentId);
 }
 
@@ -314,17 +247,10 @@ export async function createOrUpdateBenefit(input: {
   expiresAt?: string;
   active: boolean;
 }): Promise<CustomerBenefit> {
-  if (currentDbMode === 'local') {
-    return localCreateOrUpdateBenefit(input);
-  }
   return cloudCreateOrUpdateBenefit(input);
 }
 
 export async function deleteBenefitById(benefitId: string): Promise<void> {
-  if (currentDbMode === 'local') {
-    await localDeleteBenefit(benefitId);
-    return;
-  }
   await cloudDeleteBenefitById(benefitId);
 }
 
@@ -337,41 +263,22 @@ export async function createOrUpdateCategory(input: {
   active: boolean;
   sortOrder: number;
 }): Promise<CategoryDefinition> {
-  if (currentDbMode === 'local') {
-    return localCreateOrUpdateCategory(input);
-  }
   return cloudCreateOrUpdateCategory(input);
 }
 
 export async function deleteCategoryById(categoryId: string): Promise<void> {
-  if (currentDbMode === 'local') {
-    await localDeleteCategory(categoryId);
-    return;
-  }
   await cloudDeleteCategoryById(categoryId);
 }
 
 export async function cancelCustomerOrder(order: Order): Promise<void> {
-  if (currentDbMode === 'local') {
-    await localCancelOrder(order.id);
-    return;
-  }
   await cloudCancelCustomerOrder(order);
 }
 
 export async function markNotificationRead(notificationId: string): Promise<void> {
-  if (currentDbMode === 'local') {
-    await localMarkNotificationRead(notificationId);
-    return;
-  }
   await cloudMarkNotificationRead(notificationId);
 }
 
 export async function deleteNotificationById(notificationId: string): Promise<void> {
-  if (currentDbMode === 'local') {
-    await localDeleteNotification(notificationId);
-    return;
-  }
   await cloudDeleteNotificationById(notificationId);
 }
 
@@ -382,10 +289,6 @@ export async function sendAdminPushNotification(input: {
   type: NotificationType;
   orderId?: string;
 }): Promise<void> {
-  if (currentDbMode === 'local') {
-    await localSendPushNotification(input);
-    return;
-  }
   await cloudSendAdminPushNotification(input);
 }
 
@@ -394,9 +297,6 @@ export async function lookupOrderByCode(
   userId: string,
   isAdmin: boolean,
 ): Promise<Order | null> {
-  if (currentDbMode === 'local') {
-    return localLookupOrderByCode(code);
-  }
   return cloudLookupOrderByCode(code, userId, isAdmin);
 }
 
@@ -404,17 +304,39 @@ export async function saveShippingSettings(
   user: AppUser,
   input: { freeShippingThreshold: number; standardShippingCost: number },
 ): Promise<void> {
-  if (currentDbMode === 'local') {
-    await localSaveShippingSettings(input);
-    return;
-  }
   await cloudSaveShippingSettings(user, input);
 }
 
-export type { ParsedReceiptInfo };
-
 export async function parseTransferReceipt(imageDataUrl: string): Promise<ParsedReceiptInfo> {
-  return parseTransferReceiptImage(imageDataUrl, currentDbMode);
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    throw new Error('Iniciá sesión para leer la información del comprobante.');
+  }
+  const idToken = await currentUser.getIdToken();
+
+  const response = await fetch('/api/receipts/parse', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+      'X-Auth-Provider': 'firebase',
+    },
+    body: JSON.stringify({ imageDataUrl }),
+  });
+
+  if (!response.ok) {
+    let message = 'No pudimos leer automáticamente el comprobante.';
+    try {
+      const errBody = (await response.json()) as { error?: string };
+      if (errBody?.error) message = errBody.error;
+    } catch {
+      // ignore parse failure
+    }
+    throw new Error(message);
+  }
+
+  const data = (await response.json()) as { receiptInfo: ParsedReceiptInfo };
+  return data.receiptInfo;
 }
 
 export async function submitSubscriptionPayment(input: {
@@ -424,13 +346,6 @@ export async function submitSubscriptionPayment(input: {
   note?: string;
   paymentReceipt?: PaymentReceipt;
 }): Promise<SubscriptionPayment> {
-  if (currentDbMode === 'local') {
-    return localSubmitSubscriptionPayment({
-      paymentMethod: input.paymentMethod,
-      note: input.note,
-      paymentReceipt: input.paymentReceipt,
-    });
-  }
   return submitCloudSubscriptionPayment(input);
 }
 
@@ -442,14 +357,6 @@ export async function adminSetAccountStatus(input: {
   allPayments: SubscriptionPayment[];
   allProducts: Product[];
 }): Promise<void> {
-  if (currentDbMode === 'local') {
-    await localAdminSetAccountStatus({
-      uid: input.targetUser.uid,
-      action: input.action,
-      paymentId: input.paymentId,
-    });
-    return;
-  }
   await adminSetCloudAccountStatus(input);
 }
 
@@ -457,11 +364,5 @@ export async function adminRejectSubscriptionPayment(
   payment: SubscriptionPayment,
   adminUser: AppUser,
 ): Promise<void> {
-  if (currentDbMode === 'local') {
-    await localAdminRejectSubscriptionPayment(payment.id);
-    return;
-  }
   await adminRejectCloudSubscriptionPayment(payment, adminUser);
 }
-
-
